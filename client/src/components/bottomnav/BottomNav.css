@@ -1,0 +1,51 @@
+.waBottomNav {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  min-height: 56px;
+  padding-bottom: max(0px, env(safe-area-inset-bottom, 0px));
+  background: #1f2c33;
+  border-top: 1px solid #2a3942;
+  z-index: 350;
+}
+
+.waBottomNavBtn {
+  flex: 1;
+  max-width: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: #8696a0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.waBottomNavBtn--active {
+  color: #53bdeb;
+}
+
+.waBottomNavIcon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.waBottomNavLabel {
+  white-space: nowrap;
+}
+
+.waBottomNavBtn:focus-visible {
+  outline: 2px solid #53bdeb;
+  outline-offset: -2px;
+}
+
+@media (min-width: 769px) {
+  .waBottomNav {
+    display: none;
+  }
+}

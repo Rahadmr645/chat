@@ -3,18 +3,32 @@ import mongoose from "mongoose";
 const messageSchema = new mongoose.Schema(
   {
     senderId: {
-      type: String, // later ObjectId (user)
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
     },
     receiverId: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
+    },
+    kind: {
+      type: String,
+      enum: ["text", "voice"],
+      default: "text",
     },
     text: {
       type: String,
+      trim: true,
+      default: "",
     },
-    image: {
+    durationSec: {
+      type: Number,
+      default: 0,
+    },
+    voiceMime: {
       type: String,
+      default: "",
     },
     seen: {
       type: Boolean,

@@ -1,0 +1,180 @@
+.waListChrome {
+  flex-shrink: 0;
+  background: #111b21;
+  border-bottom: 1px solid #2a3942;
+  z-index: 6;
+}
+
+.waListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
+  min-height: 60px;
+  background: #202c33;
+}
+
+.waListTitle {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: #e9edef;
+  letter-spacing: 0.02em;
+}
+
+.waListHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.waListIconBtn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #aebac1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.waListIconBtn:hover,
+.waListIconBtn:focus-visible {
+  background: #2a3942;
+  color: #e9edef;
+  outline: none;
+}
+
+.waListIconBtn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.waListMenuWrap {
+  position: relative;
+}
+
+.waListDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  padding: 6px 0;
+  background: #233138;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 120;
+}
+
+.waListDropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  color: #e9edef;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.waListDropdown button:hover {
+  background: #2a3942;
+}
+
+.waListSearchWrap {
+  padding: 8px 12px 6px;
+  background: #111b21;
+}
+
+.waListSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #202c33;
+}
+
+.waListSearch svg {
+  width: 20px;
+  height: 20px;
+  color: #8696a0;
+  flex-shrink: 0;
+}
+
+.waListSearchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #e9edef;
+  font-size: 14px;
+  outline: none;
+}
+
+.waListSearchInput::placeholder {
+  color: #8696a0;
+}
+
+.waFilterRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: #111b21;
+}
+
+.waFilterRow::-webkit-scrollbar {
+  display: none;
+}
+
+.waFilterChip {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  background: #202c33;
+  color: #8696a0;
+}
+
+.waFilterChip:hover {
+  color: #e9edef;
+}
+
+.waFilterChip--active {
+  background: #00a88433;
+  color: #00a884;
+}
+
+.waFilterChipMore {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #202c33;
+  color: #8696a0;
+  border: none;
+  cursor: pointer;
+}
+
+.waFilterChipMore:hover {
+  color: #e9edef;
+}
+
+.waHiddenFile {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}

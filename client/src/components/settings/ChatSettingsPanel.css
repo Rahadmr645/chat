@@ -1,0 +1,164 @@
+.chatSettingsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.chatSettingsPanel {
+  width: min(100%, 420px);
+  max-width: 100%;
+  background: #111b21;
+  color: #e9edef;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
+}
+
+.chatSettingsHeader {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #202c33;
+  border-bottom: 1px solid #2a3942;
+}
+
+.chatSettingsBack {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #e9edef;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.chatSettingsBack:hover {
+  background: #2a3942;
+}
+
+.chatSettingsTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.chatSettingsBody {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}
+
+.chatSettingsSearch {
+  margin: 12px 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  width: calc(100% - 32px);
+  box-sizing: border-box;
+  background: #202c33;
+  color: #e9edef;
+  font-size: 14px;
+}
+
+.chatSettingsSearch::placeholder {
+  color: #8696a0;
+}
+
+.chatSettingsAddRow {
+  padding: 0 16px 12px;
+}
+
+.chatSettingsAddBtn {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #2a3942;
+  background: #00a884;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chatSettingsAddBtn:hover {
+  filter: brightness(1.05);
+}
+
+.stHomeNav {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 0;
+}
+
+.stHomeRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 20px;
+  border: none;
+  border-bottom: 1px solid #2a3942;
+  background: transparent;
+  color: #e9edef;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stHomeRow:hover {
+  background: #202c33;
+}
+
+.stHomeRowLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.stHomeBadge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: #00a884;
+  color: #111b21;
+  font-size: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.stHomeChevron {
+  color: #8696a0;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 300;
+}
+
+@media (min-width: 769px) {
+  .chatSettingsOverlay {
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .chatSettingsPanel {
+    width: min(100%, 440px);
+    max-height: min(90dvh, 720px);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  }
+}

@@ -1,31 +1,119 @@
-import React from "react";
+import { useEffect } from "react";
+import WaListChrome from "../layout/WaListChrome.jsx";
 import "./Sidebar.css";
 
-const Sidebar = () => {
+const Sidebar = ({
+  friends,
+  loading,
+  error,
+  friendActionError,
+  activeUserId,
+  isMobile = false,
+  sidebarOpen = false,
+  onSelectUser,
+  onSendFriendRequestByEmail,
+  onBlockFriend,
+  onUnfriend,
+  searchQuery = "",
+  onSearchQueryChange,
+  onLogout,
+  onOpenSettings,
+}) => {
+  useEffect(() => {
+    const closeKebabMenus = (e) => {
+      document.querySelectorAll("details.friendRowKebab[open]").forEach((el) => {
+        if (!el.contains(e.target)) {
+          el.removeAttribute("open");
+        }
+      });
+    };
+    document.addEventListener("pointerdown", closeKebabMenus, true);
+    return () => document.removeEventListener("pointerdown", closeKebabMenus, true);
+  }, []);
+
+  const sidebarClass = [
+    "sidebar",
+    isMobile && sidebarOpen ? "sidebar--open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="sidebar">
-      <div className="sidebarHeader">
-        <h3>Chats</h3>
-      </div>
+    <aside className={sidebarClass}>
+      <WaListChrome
+        searchQuery={searchQuery}
+        onSearchChange={onSearchQueryChange}
+        onNewChat={onSendFriendRequestByEmail}
+        isMobile={isMobile}
+        onLogout={onLogout}
+        onOpenSettings={onOpenSettings}
+      />
 
       <div className="chatList">
-        <div className="chatItem">
-          <img src="https://i.pravatar.cc/50?img=1" alt="" />
-          <div>
-            <h4>John Doe</h4>
-            <p>Last message here...</p>
-          </div>
-        </div>
+        {loading && <p className="sidebarInfo">Loading...</p>}
+        {error && <p className="sidebarError">{error}</p>}
+        {friendActionError && <p className="sidebarError">{friendActionError}</p>}
 
-        <div className="chatItem">
-          <img src="https://i.pravatar.cc/50?img=2" alt="" />
-          <div>
-            <h4>Sarah</h4>
-            <p>Are you coming?</p>
-          </div>
-        </div>
+        {!loading && !error && friends.length === 0 && (
+          <p className="sidebarInfo">
+            No chats yet. Tap + to invite by email, or open Settings for requests and blocked
+            accounts.
+          </p>
+        )}
+
+        {friends.map((user) => {
+          const isActive = activeUserId === user._id;
+          return (
+            <div key={user._id} className={`friendRow ${isActive ? "active" : ""}`}>
+              <button
+                type="button"
+                className="friendMain"
+                onClick={() => onSelectUser(user._id)}
+              >
+                <div className="avatarStub">
+                  {user.name?.charAt(0)?.toUpperCase() ?? "U"}
+                </div>
+                <div className="friendMeta">
+                  <div className="friendTopLine">
+                    <div className="friendNameRow">
+                      <h4>{user.name}</h4>
+                      {user.isOnline && (
+                        <span className="onlineDot" title="Online" aria-label="Online" />
+                      )}
+                    </div>
+                    <span className="friendRowTime" aria-hidden="true">
+                      {"\u00a0"}
+                    </span>
+                  </div>
+                  <p className="friendPreview">{user.email}</p>
+                </div>
+              </button>
+              <details className="friendRowKebab" onClick={(e) => e.stopPropagation()}>
+                <summary className="friendRowKebabBtn" aria-label="Chat options">
+                  ⋮
+                </summary>
+                <div className="friendRowKebabPanel">
+                  <button
+                    type="button"
+                    className="friendRowKebabItem"
+                    onClick={() => onUnfriend(user._id)}
+                  >
+                    Unfriend
+                  </button>
+                  <button
+                    type="button"
+                    className="friendRowKebabItem friendRowKebabItem--danger"
+                    onClick={() => onBlockFriend(user._id)}
+                  >
+                    Block
+                  </button>
+                </div>
+              </details>
+            </div>
+          );
+        })}
       </div>
-    </div>
+    </aside>
   );
 };
 

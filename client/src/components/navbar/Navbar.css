@@ -1,54 +1,162 @@
-.nav {
+.waNav {
+  flex-shrink: 0;
+  background: #008069;
+  color: #fff;
+}
+
+.waNavBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 20px;
-  background-color: #111b21;
-  color: white;
-  height: 60px;
-  position: sticky;
-  top: 0;
-  z-index: 1000;
+  min-height: 56px;
+  padding: 0 8px 0 12px;
 }
 
-.left {
-  flex: 1;
-}
-
-.logo {
-  margin: 0;
-  font-size: 18px;
-}
-
-.middle {
-  flex: 2;
+.waNavLeft {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.search {
-  width: 80%;
-  padding: 8px 12px;
-  border-radius: 20px;
+.waLogo {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.waLogo--rchat {
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+
+.waNavRight {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.waIconBtn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
   border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.waIconBtn:hover,
+.waIconBtn:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
   outline: none;
 }
 
-.right {
-  flex: 1;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
+.waIconBtn--active {
+  background: rgba(255, 255, 255, 0.18);
 }
 
-.status {
-  font-size: 12px;
-  color: #25d366;
+.navIconSvg {
+  width: 24px;
+  height: 24px;
 }
 
-.avatar {
-  width: 35px;
-  height: 35px;
+.waProfileBtn {
+  padding: 0;
+}
+
+.waProfileLetter {
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  display: grid;
+  place-items: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.waHiddenInput {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.waMenuWrap {
+  position: relative;
+}
+
+.waDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  max-width: min(90vw, 280px);
+  padding: 6px 0;
+  background: #233138;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 500;
+}
+
+.waDropdown--profile {
+  min-width: 240px;
+}
+
+.waDropdownHeader {
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid #2a3942;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.waDropdownHeader strong {
+  font-size: 15px;
+}
+
+.waDropdownEmail {
+  font-size: 12px;
+  color: #8696a0;
+  word-break: break-all;
+}
+
+.waDropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  color: #e9edef;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.waDropdown button:hover {
+  background: #2a3942;
+}
+
+@media (max-width: 480px) {
+  .waLogo {
+    font-size: 1.15rem;
+  }
+
+  .waLogo--rchat {
+    font-size: 1rem;
+  }
+
+  .waIconBtn {
+    width: 40px;
+    height: 40px;
+  }
 }

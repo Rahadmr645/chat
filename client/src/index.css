@@ -1,0 +1,19 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: #0b141a;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
