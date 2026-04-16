@@ -12,22 +12,15 @@ export const connectSocket = (userId) => {
   }
 
   socket = io(SOCKET_URL, {
-    transports: ["websocket"],
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 500,
   });
 
   socket.on("connect", () => {
     socket.emit("addUser", String(userId));
   });
-};
-
-export const emitChatMessage = (payload) => {
-  if (socket) {
-    socket.emit("sendMessage", {
-      ...payload,
-      senderId: String(payload.senderId),
-      receiverId: String(payload.receiverId),
-    });
-  }
 };
 
 export const emitTyping = (senderId, receiverId) => {
@@ -60,6 +53,55 @@ export const emitVoiceRecordingStart = (senderId, receiverId) => {
 export const emitVoiceRecordingStop = (senderId, receiverId) => {
   if (socket) {
     socket.emit("voiceRecordingStop", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+    });
+  }
+};
+
+export const emitCallOffer = ({ senderId, receiverId, offer, isVideo }) => {
+  if (socket) {
+    socket.emit("callOffer", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+      offer,
+      isVideo: Boolean(isVideo),
+    });
+  }
+};
+
+export const emitCallAnswer = ({ senderId, receiverId, answer }) => {
+  if (socket) {
+    socket.emit("callAnswer", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+      answer,
+    });
+  }
+};
+
+export const emitCallIceCandidate = ({ senderId, receiverId, candidate }) => {
+  if (socket) {
+    socket.emit("callIceCandidate", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+      candidate,
+    });
+  }
+};
+
+export const emitCallReject = ({ senderId, receiverId }) => {
+  if (socket) {
+    socket.emit("callReject", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+    });
+  }
+};
+
+export const emitCallEnd = ({ senderId, receiverId }) => {
+  if (socket) {
+    socket.emit("callEnd", {
       senderId: String(senderId),
       receiverId: String(receiverId),
     });
@@ -109,6 +151,48 @@ export const subscribePresence = (callback) => {
   socket.on("presence", handler);
 
   return () => socket?.off("presence", handler);
+};
+
+export const subscribeIncomingCall = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("incomingCall", handler);
+  return () => socket?.off("incomingCall", handler);
+};
+
+export const subscribeCallAnswered = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callAnswered", handler);
+  return () => socket?.off("callAnswered", handler);
+};
+
+export const subscribeCallIceCandidate = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callIceCandidate", handler);
+  return () => socket?.off("callIceCandidate", handler);
+};
+
+export const subscribeCallRejected = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callRejected", handler);
+  return () => socket?.off("callRejected", handler);
+};
+
+export const subscribeCallEnded = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callEnded", handler);
+  return () => socket?.off("callEnded", handler);
+};
+
+export const subscribeCallUnavailable = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callUnavailable", handler);
+  return () => socket?.off("callUnavailable", handler);
 };
 
 export const disconnectSocket = () => {

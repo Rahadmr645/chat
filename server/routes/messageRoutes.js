@@ -5,6 +5,7 @@ import {
   getVoiceAudio,
   markAsSeen,
   markConversationSeen,
+  sendMediaMessage,
   sendMessage,
   sendVoiceMessage,
 } from "../controller/messageController.js";
@@ -14,12 +15,17 @@ const voiceUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
 });
+const mediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 
 const router = express.Router();
 
 router.use(protect);
 
 router.post("/voice", voiceUpload.single("audio"), sendVoiceMessage);
+router.post("/media", mediaUpload.single("media"), sendMediaMessage);
 router.get("/audio/:messageId", getVoiceAudio);
 router.post("/send", sendMessage);
 router.get("/conversation/:otherUserId", getConversation);

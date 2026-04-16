@@ -44,6 +44,10 @@
   font-weight: 700;
 }
 
+.avatarPhoto {
+  object-fit: cover;
+}
+
 .chatItem h4 {
   margin: 0;
   font-size: 14px;
@@ -231,6 +235,10 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.avatarStub.avatarPhoto {
+  display: block;
 }
 
 .friendRowTime {

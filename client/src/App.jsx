@@ -6,11 +6,16 @@ import { useAuth } from "./hooks/useAuth.js";
 import "./App.css";
 
 function ProtectedApp() {
-  const { user, token, logout } = useAuth();
+  const { user, token, logout, updateCurrentUser } = useAuth();
 
   return (
     <div className="appShell">
-      <Dashboard currentUser={user} token={token} onLogout={logout} />
+      <Dashboard
+        currentUser={user}
+        token={token}
+        onLogout={logout}
+        onProfileUpdate={updateCurrentUser}
+      />
     </div>
   );
 }

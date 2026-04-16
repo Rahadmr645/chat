@@ -14,7 +14,7 @@ const messageSchema = new mongoose.Schema(
     },
     kind: {
       type: String,
-      enum: ["text", "voice"],
+      enum: ["text", "voice", "image", "video", "audio", "file"],
       default: "text",
     },
     text: {
@@ -29,6 +29,42 @@ const messageSchema = new mongoose.Schema(
     voiceMime: {
       type: String,
       default: "",
+    },
+    mediaUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    mediaPublicId: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    mediaMime: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    mediaWidth: {
+      type: Number,
+      default: 0,
+    },
+    mediaHeight: {
+      type: Number,
+      default: 0,
+    },
+    mediaDurationSec: {
+      type: Number,
+      default: 0,
+    },
+    mediaName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    mediaSizeBytes: {
+      type: Number,
+      default: 0,
     },
     seen: {
       type: Boolean,

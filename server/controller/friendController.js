@@ -7,6 +7,7 @@ const sanitizeUser = (user) => ({
   _id: user._id,
   name: user.name,
   email: user.email,
+  avatarUrl: user.avatarUrl || "",
 });
 
 const isFriendWith = (user, otherId) =>
@@ -38,7 +39,9 @@ export const sendFriendRequest = async (req, res) => {
       return res.status(400).json({ error: "You cannot send a request to yourself" });
     }
 
-    const target = await User.findById(toId).select("name email friends blockedUsers");
+    const target = await User.findById(toId).select(
+      "name email friends blockedUsers avatarUrl"
+    );
     if (!target) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -74,8 +77,8 @@ export const sendFriendRequest = async (req, res) => {
       status: "pending",
     });
 
-    await request.populate("from", "name email");
-    await request.populate("to", "name email");
+    await request.populate("from", "name email avatarUrl");
+    await request.populate("to", "name email avatarUrl");
 
     return res.status(201).json({
       message: "Friend request sent",
@@ -120,7 +123,7 @@ export const getIncomingRequests = async (req, res) => {
       to: req.user._id,
       status: "pending",
     })
-      .populate("from", "name email")
+      .populate("from", "name email avatarUrl")
       .sort({ createdAt: -1 });
 
     return res.json({
@@ -164,7 +167,7 @@ export const acceptFriendRequest = async (req, res) => {
     await User.findByIdAndUpdate(toId, { $addToSet: { friends: fromId } });
     await FriendRequest.deleteOne({ _id: request._id });
 
-    const friend = await User.findById(fromId).select("name email");
+    const friend = await User.findById(fromId).select("name email avatarUrl");
     return res.json({
       message: "Friend request accepted",
       friend: sanitizeUser(friend),
@@ -259,7 +262,7 @@ export const getBlockedUsers = async (req, res) => {
     }
 
     const list = await User.find({ _id: { $in: ids } })
-      .select("name email")
+      .select("name email avatarUrl")
       .sort({ name: 1 });
 
     return res.json({

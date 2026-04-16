@@ -1,10 +1,12 @@
 import express from "express";
+import multer from "multer";
 import {
   getFriends,
   getMe,
   getUsers,
   loginUser,
   registerUser,
+  updateProfilePhoto,
 } from "../controller/authController.js";
 import {
   acceptFriendRequest,
@@ -21,10 +23,20 @@ import {
 import { protect } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
+const profileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
+router.patch(
+  "/profile/photo",
+  protect,
+  profileUpload.single("avatar"),
+  updateProfilePhoto
+);
 router.get("/users/blocked", protect, getBlockedUsers);
 router.get("/users", protect, getUsers);
 router.get("/friends", protect, getFriends);

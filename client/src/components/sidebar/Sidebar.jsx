@@ -63,6 +63,7 @@ const Sidebar = ({
 
         {friends.map((user) => {
           const isActive = activeUserId === user._id;
+          const avatarLetter = user.name?.charAt(0)?.toUpperCase() ?? "U";
           return (
             <div key={user._id} className={`friendRow ${isActive ? "active" : ""}`}>
               <button
@@ -70,9 +71,15 @@ const Sidebar = ({
                 className="friendMain"
                 onClick={() => onSelectUser(user._id)}
               >
-                <div className="avatarStub">
-                  {user.name?.charAt(0)?.toUpperCase() ?? "U"}
-                </div>
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={`${user.name} avatar`}
+                    className="avatarStub avatarPhoto"
+                  />
+                ) : (
+                  <div className="avatarStub">{avatarLetter}</div>
+                )}
                 <div className="friendMeta">
                   <div className="friendTopLine">
                     <div className="friendNameRow">

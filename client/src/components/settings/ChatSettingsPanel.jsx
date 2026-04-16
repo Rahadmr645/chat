@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "../sidebar/Sidebar.css";
 import "./ChatSettingsPanel.css";
+import { apiUploadProfilePhoto } from "../../services/api.js";
 
 const VIEWS = {
   HOME: "home",
@@ -23,9 +24,86 @@ const titles = {
   [VIEWS.DISCOVER]: "Discover people",
 };
 
+const SETTINGS_HOME_ITEMS = [
+  {
+    id: "general",
+    icon: "🖥️",
+    title: "General",
+    subtitle: "Startup and close",
+    action: "soon",
+  },
+  {
+    id: "account",
+    icon: "🔑",
+    title: "Account",
+    subtitle: "Security notifications, account info",
+    action: "soon",
+  },
+  {
+    id: "privacy",
+    icon: "🔒",
+    title: "Privacy",
+    subtitle: "Blocked contacts, disappearing messages",
+    action: "view",
+    view: VIEWS.BLOCKED,
+  },
+  {
+    id: "chats",
+    icon: "💬",
+    title: "Chats",
+    subtitle: "Theme, wallpaper, chat settings",
+    action: "soon",
+  },
+  {
+    id: "media",
+    icon: "🎥",
+    title: "Video & voice",
+    subtitle: "Camera, microphone & speakers",
+    action: "soon",
+  },
+  {
+    id: "notifications",
+    icon: "🔔",
+    title: "Notifications",
+    subtitle: "Messages, groups, sounds",
+    action: "soon",
+  },
+  {
+    id: "shortcuts",
+    icon: "⌨️",
+    title: "Keyboard shortcuts",
+    subtitle: "Quick actions",
+    action: "soon",
+  },
+  {
+    id: "help",
+    icon: "❓",
+    title: "Help and feedback",
+    subtitle: "Help center, contact us, privacy policy",
+    action: "soon",
+  },
+];
+
+const Avatar = ({ userLike, className = "avatarStub", fallback = "U" }) => {
+  const label = userLike?.name?.charAt(0)?.toUpperCase() || fallback;
+  if (userLike?.avatarUrl) {
+    return (
+      <img
+        src={userLike.avatarUrl}
+        alt={`${userLike?.name || "User"} avatar`}
+        className={`${className} avatarPhoto`}
+      />
+    );
+  }
+  return <div className={className}>{label}</div>;
+};
+
 const ChatSettingsPanel = ({
   open,
   onClose,
+  currentUser,
+  token,
+  onLogout,
   loading,
   error,
   friendActionError,
@@ -38,14 +116,18 @@ const ChatSettingsPanel = ({
   onRejectRequest,
   onBlockFromRequest,
   onUnblock,
+  onProfileUpdate,
 }) => {
   const [view, setView] = useState(VIEWS.HOME);
   const [q, setQ] = useState("");
+  const [profileUploading, setProfileUploading] = useState(false);
+  const [profileError, setProfileError] = useState("");
 
   useEffect(() => {
     if (!open) {
       setView(VIEWS.HOME);
       setQ("");
+      setProfileError("");
     }
   }, [open]);
 
@@ -84,7 +166,25 @@ const ChatSettingsPanel = ({
     else setView(VIEWS.HOME);
   };
 
+  const comingSoon = (label) => () => {
+    window.alert(`${label} — coming soon.`);
+  };
+
   if (!open) return null;
+
+  const uploadProfilePhoto = async (file) => {
+    if (!file || !token) return;
+    setProfileUploading(true);
+    setProfileError("");
+    try {
+      const data = await apiUploadProfilePhoto({ token, file });
+      onProfileUpdate?.(data.user);
+    } catch (err) {
+      setProfileError(err.message || "Could not update profile photo.");
+    } finally {
+      setProfileUploading(false);
+    }
+  };
 
   const showSearch =
     view === VIEWS.REQUESTS || view === VIEWS.BLOCKED || view === VIEWS.DISCOVER;
@@ -121,17 +221,81 @@ const ChatSettingsPanel = ({
         <div className="chatSettingsBody">
           {friendActionError && <p className="sidebarError">{friendActionError}</p>}
           {error && <p className="sidebarError">{error}</p>}
+          {profileError && <p className="sidebarError">{profileError}</p>}
           {loading && view !== VIEWS.HOME && <p className="sidebarInfo">Loading…</p>}
 
           {view === VIEWS.HOME && (
             <>
-              <nav className="stHomeNav" aria-label="Settings sections">
+              <div className="stSearchWrap">
+                <input
+                  type="search"
+                  className="chatSettingsSearch stSearchHome"
+                  placeholder="Search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <section className="stProfileSection stProfileSection--wa" aria-label="Profile settings">
+                <Avatar userLike={currentUser} className="stProfileAvatar stProfileAvatar--wa" fallback="U" />
+                <div className="stProfileMeta">
+                  <h3>{currentUser?.name || "You"}</h3>
+                  <p>{currentUser?.email || ""}</p>
+                </div>
+                <label className="stProfileUploadBtn">
+                  {profileUploading ? "Uploading..." : "Change photo"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={profileUploading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadProfilePhoto(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </section>
+              <nav className="stHomeNav stHomeNav--wa" aria-label="Settings sections">
+                {SETTINGS_HOME_ITEMS.filter((item) => {
+                  const query = q.trim().toLowerCase();
+                  if (!query) return true;
+                  return `${item.title} ${item.subtitle}`.toLowerCase().includes(query);
+                }).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="stHomeRow stHomeRow--wa"
+                    onClick={
+                      item.action === "view"
+                        ? () => setView(item.view)
+                        : comingSoon(item.title)
+                    }
+                  >
+                    <span className="stHomeIcon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                    <span className="stHomeInfo">
+                      <span className="stHomeRowLabel">{item.title}</span>
+                      <span className="stHomeSub">{item.subtitle}</span>
+                    </span>
+                    <span className="stHomeChevron" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                ))}
                 <button
                   type="button"
-                  className="stHomeRow"
+                  className="stHomeRow stHomeRow--wa"
                   onClick={() => setView(VIEWS.REQUESTS)}
                 >
-                  <span className="stHomeRowLabel">Friend requests</span>
+                  <span className="stHomeIcon" aria-hidden="true">
+                    📨
+                  </span>
+                  <span className="stHomeInfo">
+                    <span className="stHomeRowLabel">Friend requests</span>
+                    <span className="stHomeSub">Manage incoming requests</span>
+                  </span>
                   {incomingRequests.length > 0 && (
                     <span className="stHomeBadge">{incomingRequests.length}</span>
                   )}
@@ -141,25 +305,31 @@ const ChatSettingsPanel = ({
                 </button>
                 <button
                   type="button"
-                  className="stHomeRow"
-                  onClick={() => setView(VIEWS.BLOCKED)}
+                  className="stHomeRow stHomeRow--wa"
+                  onClick={() => setView(VIEWS.DISCOVER)}
                 >
-                  <span className="stHomeRowLabel">Blocked accounts</span>
-                  {blockedUsers.length > 0 && (
-                    <span className="stHomeBadge">{blockedUsers.length}</span>
-                  )}
+                  <span className="stHomeIcon" aria-hidden="true">
+                    👥
+                  </span>
+                  <span className="stHomeInfo">
+                    <span className="stHomeRowLabel">Discover people</span>
+                    <span className="stHomeSub">Find users and send requests</span>
+                  </span>
                   <span className="stHomeChevron" aria-hidden="true">
                     ›
                   </span>
                 </button>
                 <button
                   type="button"
-                  className="stHomeRow"
-                  onClick={() => setView(VIEWS.DISCOVER)}
+                  className="stHomeRow stHomeRow--wa stHomeRow--danger"
+                  onClick={onLogout}
                 >
-                  <span className="stHomeRowLabel">Discover people</span>
-                  <span className="stHomeChevron" aria-hidden="true">
-                    ›
+                  <span className="stHomeIcon" aria-hidden="true">
+                    ⎋
+                  </span>
+                  <span className="stHomeInfo">
+                    <span className="stHomeRowLabel">Log out</span>
+                    <span className="stHomeSub">Sign out from this device</span>
                   </span>
                 </button>
               </nav>
@@ -200,9 +370,7 @@ const ChatSettingsPanel = ({
               {filteredIncoming.map((req) => (
                 <div key={req._id} className="requestRow">
                   <div className="requestInfo">
-                    <div className="avatarStub">
-                      {req.from?.name?.charAt(0)?.toUpperCase() ?? "?"}
-                    </div>
+                    <Avatar userLike={req.from} />
                     <div>
                       <h4>{req.from?.name}</h4>
                       <p>{req.from?.email}</p>
@@ -244,7 +412,7 @@ const ChatSettingsPanel = ({
               {filteredDiscover.map((user) => (
                 <div key={user._id} className="discoverItem">
                   <div className="discoverInfo">
-                    <div className="avatarStub">{user.name?.charAt(0)?.toUpperCase() ?? "U"}</div>
+                    <Avatar userLike={user} />
                     <div className="friendMeta">
                       <div className="friendNameRow">
                         <h4>{user.name}</h4>
@@ -279,9 +447,7 @@ const ChatSettingsPanel = ({
               {filteredBlocked.map((user) => (
                 <div key={user._id} className="blockedRow">
                   <div className="blockedInfo">
-                    <div className="avatarStub blockedAvatar">
-                      {user.name?.charAt(0)?.toUpperCase() ?? "U"}
-                    </div>
+                    <Avatar userLike={user} className="avatarStub blockedAvatar" />
                     <div>
                       <h4>{user.name}</h4>
                       <p>{user.email}</p>

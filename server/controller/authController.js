@@ -4,6 +4,10 @@ import User from "../models/user.js";
 import FriendRequest from "../models/friendRequest.js";
 import { jwtSecret } from "../config/env.js";
 import { isUserOnline } from "../socket/socketServer.js";
+import {
+  destroyCloudinaryAsset,
+  uploadBufferToCloudinary,
+} from "../utils/cloudinary.js";
 
 const signToken = (userId) => {
   return jwt.sign({ userId }, jwtSecret, { expiresIn: "7d" });
@@ -13,6 +17,7 @@ const sanitizeUser = (user) => ({
   _id: user._id,
   name: user.name,
   email: user.email,
+  avatarUrl: user.avatarUrl || "",
 });
 
 export const registerUser = async (req, res) => {
@@ -75,6 +80,41 @@ export const getMe = async (req, res) => {
   return res.json({ user: sanitizeUser(req.user) });
 };
 
+export const updateProfilePhoto = async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file || !file.buffer || file.buffer.length < 64) {
+      return res.status(400).json({ error: "Profile image is required" });
+    }
+    if (!String(file.mimetype || "").startsWith("image/")) {
+      return res.status(400).json({ error: "Only image files are allowed" });
+    }
+
+    const uploaded = await uploadBufferToCloudinary(file.buffer, {
+      folder: "rchat/profile",
+      resource_type: "image",
+      transformation: [{ width: 600, height: 600, crop: "limit" }],
+    });
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        avatarUrl: uploaded.secure_url || "",
+        avatarPublicId: uploaded.public_id || "",
+      },
+      { new: true }
+    ).select("-password");
+
+    if (req.user.avatarPublicId && req.user.avatarPublicId !== uploaded.public_id) {
+      void destroyCloudinaryAsset(req.user.avatarPublicId, "image").catch(() => {});
+    }
+
+    return res.json({ user: sanitizeUser(updatedUser) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 export const getUsers = async (req, res) => {
   try {
     const me = req.user._id;
@@ -91,7 +131,7 @@ export const getUsers = async (req, res) => {
       _id: idQuery,
       blockedUsers: { $nin: [me] },
     })
-      .select("name email friends blockedUsers lastSeenAt")
+      .select("name email friends blockedUsers lastSeenAt avatarUrl")
       .sort({ name: 1 });
 
     const pending = await FriendRequest.find({
@@ -134,7 +174,7 @@ export const getFriends = async (req, res) => {
   try {
     const currentFriends = req.user.friends ?? [];
     const friends = await User.find({ _id: { $in: currentFriends } })
-      .select("name email lastSeenAt")
+      .select("name email lastSeenAt avatarUrl")
       .sort({ name: 1 });
 
     return res.json({

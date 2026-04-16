@@ -63,6 +63,13 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const updateCurrentUser = (nextUser) => {
+    setUser((prev) => ({
+      ...(prev || {}),
+      ...(nextUser || {}),
+    }));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -73,6 +80,7 @@ export function AuthProvider({ children }) {
         register,
         login,
         logout,
+        updateCurrentUser,
       }}
     >
       {children}

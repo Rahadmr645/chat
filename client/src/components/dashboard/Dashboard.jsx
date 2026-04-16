@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./Dashboard.css";
+import { NotificationProvider, useNotifications } from "../../context/NotificationContext.jsx";
 import WaRail from "../layout/WaRail.jsx";
 import BottomNav from "../bottomnav/BottomNav";
 import TabPlaceholder from "../tabs/TabPlaceholder";
@@ -16,7 +17,7 @@ const matchQuery = (userLike, q) => {
   return blob.includes(q);
 };
 
-const Dashboard = ({ currentUser, token, onLogout }) => {
+const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const [users, setUsers] = useState([]);
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -30,6 +31,13 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
   const [mainTab, setMainTab] = useState("chats");
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const {
+    registerHandlers,
+    notifyFriendRequest,
+  } = useNotifications();
+
+  const friendRequestBaselineRef = useRef(null);
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -212,6 +220,46 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
     [friends, activeUserId]
   );
 
+  const getContactLabel = useCallback(
+    (userId) => {
+      if (!userId) return "Someone";
+      const row = friends.find((u) => String(u._id) === String(userId));
+      return row?.name || row?.email || "Someone";
+    },
+    [friends]
+  );
+
+  useEffect(() => {
+    registerHandlers({
+      onOpenChat: (userId) => {
+        if (!userId) return;
+        setMainTab("chats");
+        setActiveUserId(String(userId));
+        if (isMobile) setSidebarOpen(false);
+      },
+      onOpenSettings: () => setSettingsOpen(true),
+    });
+  }, [registerHandlers, isMobile]);
+
+  useEffect(() => {
+    if (loadingUsers) return;
+    const ids = new Set(incomingRequests.map((r) => String(r._id)));
+    if (friendRequestBaselineRef.current === null) {
+      friendRequestBaselineRef.current = ids;
+      return;
+    }
+    for (const req of incomingRequests) {
+      const id = String(req._id);
+      if (!friendRequestBaselineRef.current.has(id)) {
+        notifyFriendRequest(req);
+        friendRequestBaselineRef.current.add(id);
+      }
+    }
+    for (const old of [...friendRequestBaselineRef.current]) {
+      if (!ids.has(old)) friendRequestBaselineRef.current.delete(old);
+    }
+  }, [incomingRequests, loadingUsers, notifyFriendRequest]);
+
   const handlePresence = useCallback((payload) => {
     if (!payload?.userId) return;
     const uid = String(payload.userId);
@@ -258,8 +306,21 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
             pendingRequestCount={incomingRequests.length}
           />
         )}
-        <div className="waMainPane">
-          {mainTab === "chats" ? (
+        <div className="waMainPane waMainPane--layered">
+          {mainTab !== "chats" && (
+            <div className="waMainPaneTabOverlay">
+              <TabPlaceholder tab={mainTab} variant="solo" />
+            </div>
+          )}
+          <div
+            className={[
+              "waMainPaneChatKeepalive",
+              mainTab === "chats" ? "waMainPaneChatKeepalive--active" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            aria-hidden={mainTab !== "chats"}
+          >
             <div className="dashboard">
               {isMobile && sidebarOpen && (
                 <button
@@ -293,11 +354,10 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
                 isMobile={isMobile}
                 onOpenChats={() => setSidebarOpen(true)}
                 onPresence={handlePresence}
+                getContactLabel={getContactLabel}
               />
             </div>
-          ) : (
-            <TabPlaceholder tab={mainTab} variant="solo" />
-          )}
+          </div>
         </div>
       </div>
       <BottomNav active={mainTab} onSelect={setMainTab} />
@@ -305,6 +365,9 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
       <ChatSettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        currentUser={currentUser}
+        token={token}
+        onLogout={onLogout}
         loading={loadingUsers}
         error={error}
         friendActionError={friendActionError}
@@ -317,9 +380,16 @@ const Dashboard = ({ currentUser, token, onLogout }) => {
         onRejectRequest={rejectRequest}
         onBlockFromRequest={blockFromRequest}
         onUnblock={unblockUser}
+        onProfileUpdate={onProfileUpdate}
       />
     </div>
   );
 };
+
+const Dashboard = (props) => (
+  <NotificationProvider>
+    <DashboardInner {...props} />
+  </NotificationProvider>
+);
 
 export default Dashboard;

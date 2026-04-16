@@ -5,6 +5,28 @@ import Message from "../models/message.js";
 import User from "../models/user.js";
 import { isBlockedEitherWay } from "../utils/blocking.js";
 import { emitToUser } from "../socket/socketServer.js";
+import { uploadBufferToCloudinary } from "../utils/cloudinary.js";
+
+/** Normalized payload for socket clients (string ids, plain JSON). */
+const messagePayloadForSocket = (doc) => ({
+  _id: String(doc._id),
+  senderId: String(doc.senderId),
+  receiverId: String(doc.receiverId),
+  kind: doc.kind || "text",
+  text: doc.text ?? "",
+  seen: Boolean(doc.seen),
+  durationSec: doc.durationSec ?? 0,
+  voiceMime: doc.voiceMime ?? "",
+  mediaUrl: doc.mediaUrl ?? "",
+  mediaMime: doc.mediaMime ?? "",
+  mediaWidth: doc.mediaWidth ?? 0,
+  mediaHeight: doc.mediaHeight ?? 0,
+  mediaDurationSec: doc.mediaDurationSec ?? 0,
+  mediaName: doc.mediaName ?? "",
+  mediaSizeBytes: doc.mediaSizeBytes ?? 0,
+  createdAt: doc.createdAt,
+  updatedAt: doc.updatedAt,
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VOICE_DIR = path.join(__dirname, "../uploads/voice");
@@ -51,6 +73,8 @@ export const sendMessage = async (req, res) => {
       kind: "text",
       text: text.trim(),
     });
+
+    emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
 
     return res.status(201).json(newMessage);
   } catch (error) {
@@ -110,7 +134,68 @@ export const sendVoiceMessage = async (req, res) => {
       throw err;
     }
 
+    emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(msg));
+
     return res.status(201).json(msg);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+export const sendMediaMessage = async (req, res) => {
+  try {
+    const senderId = req.user._id;
+    const receiverId = req.body?.receiverId;
+    const caption = String(req.body?.text || "").trim();
+    const file = req.file;
+
+    if (!receiverId) {
+      return res.status(400).json({ error: "receiverId is required" });
+    }
+    if (!file || !file.buffer || file.buffer.length < 16) {
+      return res.status(400).json({ error: "Attachment file is required" });
+    }
+
+    const mime = String(file.mimetype || "").toLowerCase();
+    const isImage = mime.startsWith("image/");
+    const isVideo = mime.startsWith("video/");
+    const isAudio = mime.startsWith("audio/");
+    const kind = isImage ? "image" : isVideo ? "video" : isAudio ? "audio" : "file";
+
+    const sender = await User.findById(senderId).select("friends");
+    const isFriend = (sender?.friends ?? []).some(
+      (id) => String(id) === String(receiverId)
+    );
+    if (!isFriend) {
+      return res.status(403).json({ error: "You can only message your friends" });
+    }
+    if (await isBlockedEitherWay(senderId, receiverId)) {
+      return res.status(403).json({ error: "Messaging is not allowed" });
+    }
+
+    const uploaded = await uploadBufferToCloudinary(file.buffer, {
+      folder: "rchat/messages",
+      resource_type: "auto",
+    });
+
+    const newMessage = await Message.create({
+      senderId,
+      receiverId,
+      kind,
+      text: caption,
+      mediaUrl: uploaded.secure_url || "",
+      mediaPublicId: uploaded.public_id || "",
+      mediaMime: mime,
+      mediaWidth: Number(uploaded.width || 0),
+      mediaHeight: Number(uploaded.height || 0),
+      mediaDurationSec: Number(uploaded.duration || 0),
+      mediaName: String(file.originalname || ""),
+      mediaSizeBytes: Number(file.size || 0),
+    });
+
+    emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
+
+    return res.status(201).json(newMessage);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
