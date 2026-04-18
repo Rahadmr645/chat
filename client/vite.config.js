@@ -1,24 +1,28 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-import basicSsl from "@vitejs/plugin-basic-ssl";
 
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), basicSsl()],
-  server: {
-    host: "0.0.0.0",
-    port: 5173,
-    https: true,
-    proxy: {
-      "/api": {
-        target: "http://localhost:5000",
-        changeOrigin: true,
-      },
-      "/socket.io": {
-        target: "http://localhost:5000",
-        ws: true,
-        changeOrigin: true,
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const proxyTarget = env.DEV_PROXY_TARGET || "http://localhost:5000";
+  const host = env.DEV_SERVER_HOST || "0.0.0.0";
+  const port = Number(env.DEV_SERVER_PORT || 5173);
+
+  return {
+    plugins: [react()],
+    server: {
+      host,
+      port,
+      proxy: {
+        "/api": {
+          target: proxyTarget,
+          changeOrigin: true,
+        },
+        "/socket.io": {
+          target: proxyTarget,
+          ws: true,
+          changeOrigin: true,
+        },
       },
     },
-  },
+  };
 });
