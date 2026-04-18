@@ -82,3 +82,47 @@ export function IconTrash() {
     </svg>
   );
 }
+
+export function IconVideoOff() {
+  return (
+    <svg className="callCtrlIcon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z"
+      />
+    </svg>
+  );
+}
+
+export function IconMicOff() {
+  return (
+    <svg className="callCtrlIcon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zM14.98 11.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3-1.54 0-2.79 1.16-2.96 2.65L14.98 11.17zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.54 0-4.88-1.77-5.41-4.31-.07-.49-.49-.85-.99-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.34 5.91 5.78V21h2v-2.66c.94-.13 1.83-.45 2.6-.92L19.73 21 21 19.73 4.27 3z"
+      />
+    </svg>
+  );
+}
+
+export function IconChatBubble() {
+  return (
+    <svg className="callCtrlIcon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"
+      />
+    </svg>
+  );
+}
+
+export function IconEndCall() {
+  return (
+    <svg className="callCtrlIcon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.965.965 0 010-1.36C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.72c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.998.998 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"
+      />
+    </svg>
+  );
+}

@@ -39,12 +39,16 @@ import {
 import {
   IconAttach,
   IconCall,
+  IconChatBubble,
   IconEmoji,
+  IconEndCall,
   IconMic,
+  IconMicOff,
   IconSearch,
   IconSend,
   IconTrash,
   IconVideo,
+  IconVideoOff,
 } from "../../assets/icons/chatIcons.jsx";
 import VoiceMessagePlayer from "./VoiceMessagePlayer.jsx";
 import { useNotifications } from "../../context/NotificationContext.jsx";
@@ -89,6 +93,8 @@ const ChatWindow = ({
   const [incomingCall, setIncomingCall] = useState(null);
   const [localCallStream, setLocalCallStream] = useState(null);
   const [remoteCallStream, setRemoteCallStream] = useState(null);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
 
@@ -231,6 +237,8 @@ const ChatWindow = ({
     setLocalCallStream(null);
     setRemoteCallStream(null);
     setIncomingCall(null);
+    setIsMicMuted(false);
+    setIsCameraOff(false);
     setCallState({
       phase: "idle",
       peerId: "",
@@ -239,6 +247,26 @@ const ChatWindow = ({
       direction: "",
     });
   }, []);
+
+  const toggleMicMute = useCallback(() => {
+    const stream = localCallStreamRef.current;
+    if (!stream) return;
+    const next = !isMicMuted;
+    stream.getAudioTracks().forEach((t) => {
+      t.enabled = !next;
+    });
+    setIsMicMuted(next);
+  }, [isMicMuted]);
+
+  const toggleCameraOff = useCallback(() => {
+    const stream = localCallStreamRef.current;
+    if (!stream) return;
+    const next = !isCameraOff;
+    stream.getVideoTracks().forEach((t) => {
+      t.enabled = !next;
+    });
+    setIsCameraOff(next);
+  }, [isCameraOff]);
 
   const addPendingIceCandidates = useCallback(async () => {
     const pc = pcRef.current;
@@ -1175,67 +1203,162 @@ const ChatWindow = ({
         </div>
       )}
 
-      {(incomingCall || callState.phase !== "idle") && (
-        <div className="callOverlay" role="dialog" aria-modal="true" aria-label="Call dialog">
-          <div className="callCard">
-            <h4 className="callTitle">
-              {callState.peerLabel || getContactLabel(callState.peerId) || "Call"}
-            </h4>
-            {callError && <p className="callErr">{callError}</p>}
-            <p className="callStatus">
-              {incomingCall
-                ? `${incomingCall.isVideo ? "Incoming video call" : "Incoming voice call"}`
-                : callState.phase === "calling"
-                  ? "Calling..."
-                  : callState.phase === "connecting"
-                    ? "Connecting..."
-                    : "In call"}
-            </p>
-            <div className="callMediaArea">
-              {callState.isVideo && (
+      {(incomingCall || callState.phase !== "idle") && (() => {
+        const isFullscreenVideo =
+          !incomingCall && callState.isVideo && callState.phase !== "idle";
+        const peerName =
+          callState.peerLabel ||
+          getContactLabel(callState.peerId) ||
+          (incomingCall && getContactLabel(incomingCall.senderId)) ||
+          "Call";
+        const statusText = incomingCall
+          ? incomingCall.isVideo ? "Incoming video call" : "Incoming voice call"
+          : callState.phase === "calling"
+            ? "Calling..."
+            : callState.phase === "connecting"
+              ? "Connecting..."
+              : "In call";
+
+        return (
+          <div
+            className={`callOverlay${isFullscreenVideo ? " callOverlay--fullscreen" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Call dialog"
+          >
+            <div className={`callCard${isFullscreenVideo ? " callCard--fullscreen" : ""}`}>
+              {isFullscreenVideo ? (
                 <>
                   <video
-                    className="callRemoteVideo"
+                    className="callRemoteVideo callRemoteVideo--fullscreen"
                     autoPlay
                     playsInline
                     ref={(el) => {
                       if (el && remoteCallStream) el.srcObject = remoteCallStream;
                     }}
                   />
-                  <video
-                    className="callLocalVideo"
-                    autoPlay
-                    muted
-                    playsInline
-                    ref={(el) => {
-                      if (el && localCallStream) el.srcObject = localCallStream;
-                    }}
-                  />
-                </>
-              )}
-              {!callState.isVideo && (
-                <div className="callAudioOnly">Audio call</div>
-              )}
-            </div>
-            <div className="callActions">
-              {incomingCall ? (
-                <>
-                  <button type="button" className="callBtn callBtn--decline" onClick={rejectIncomingCall}>
-                    Decline
-                  </button>
-                  <button type="button" className="callBtn callBtn--accept" onClick={() => void acceptIncomingCall()}>
-                    Accept
-                  </button>
+                  {!remoteCallStream && (
+                    <div className="callRemotePlaceholder">
+                      <div className="callRemoteAvatar" aria-hidden="true">
+                        {(peerName || "?").charAt(0).toUpperCase()}
+                      </div>
+                      <p className="callRemoteName">{peerName}</p>
+                      <p className="callRemoteStatus">{statusText}</p>
+                    </div>
+                  )}
+
+                  <div className="callLocalPip">
+                    <video
+                      className="callLocalVideo callLocalVideo--pip"
+                      autoPlay
+                      muted
+                      playsInline
+                      ref={(el) => {
+                        if (el && localCallStream) el.srcObject = localCallStream;
+                      }}
+                    />
+                    {isCameraOff && (
+                      <div className="callLocalPipOff" aria-hidden="true">
+                        <IconVideoOff />
+                      </div>
+                    )}
+                  </div>
+
+                  {callError && (
+                    <p className="callErr callErr--floating">{callError}</p>
+                  )}
+
+                  <div className="callControlBar">
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${isCameraOff ? " callCtrlBtn--off" : ""}`}
+                      onClick={toggleCameraOff}
+                      aria-label={isCameraOff ? "Turn camera on" : "Turn camera off"}
+                      title={isCameraOff ? "Turn camera on" : "Turn camera off"}
+                    >
+                      {isCameraOff ? <IconVideoOff /> : <IconVideo />}
+                    </button>
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${isMicMuted ? " callCtrlBtn--off" : ""}`}
+                      onClick={toggleMicMute}
+                      aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                      title={isMicMuted ? "Unmute" : "Mute"}
+                    >
+                      {isMicMuted ? <IconMicOff /> : <IconMic />}
+                    </button>
+                    <button
+                      type="button"
+                      className="callCtrlBtn"
+                      aria-label="Chat"
+                      title="Chat"
+                    >
+                      <IconChatBubble />
+                    </button>
+                    <button
+                      type="button"
+                      className="callCtrlBtn callCtrlBtn--end"
+                      onClick={endCall}
+                      aria-label="End call"
+                      title="End call"
+                    >
+                      <IconEndCall />
+                    </button>
+                  </div>
                 </>
               ) : (
-                <button type="button" className="callBtn callBtn--decline" onClick={endCall}>
-                  End call
-                </button>
+                <>
+                  <h4 className="callTitle">{peerName}</h4>
+                  {callError && <p className="callErr">{callError}</p>}
+                  <p className="callStatus">{statusText}</p>
+                  <div className="callMediaArea">
+                    {callState.isVideo && (
+                      <>
+                        <video
+                          className="callRemoteVideo"
+                          autoPlay
+                          playsInline
+                          ref={(el) => {
+                            if (el && remoteCallStream) el.srcObject = remoteCallStream;
+                          }}
+                        />
+                        <video
+                          className="callLocalVideo"
+                          autoPlay
+                          muted
+                          playsInline
+                          ref={(el) => {
+                            if (el && localCallStream) el.srcObject = localCallStream;
+                          }}
+                        />
+                      </>
+                    )}
+                    {!callState.isVideo && (
+                      <div className="callAudioOnly">Audio call</div>
+                    )}
+                  </div>
+                  <div className="callActions">
+                    {incomingCall ? (
+                      <>
+                        <button type="button" className="callBtn callBtn--decline" onClick={rejectIncomingCall}>
+                          Decline
+                        </button>
+                        <button type="button" className="callBtn callBtn--accept" onClick={() => void acceptIncomingCall()}>
+                          Accept
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="callBtn callBtn--decline" onClick={endCall}>
+                        End call
+                      </button>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="chatInput">
         {voiceError && <p className="chatVoiceError">{voiceError}</p>}
