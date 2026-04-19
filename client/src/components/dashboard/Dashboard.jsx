@@ -17,20 +17,62 @@ const matchQuery = (userLike, q) => {
   return blob.includes(q);
 };
 
+const dashStorageKey = (userId) =>
+  `rchat_dashboard_state_${userId || "anon"}`;
+
+const readDashState = (userId) => {
+  try {
+    const raw = localStorage.getItem(dashStorageKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
 const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
+  const userIdKey = currentUser?._id ? String(currentUser._id) : "";
+  const initialDashState = useMemo(
+    () => readDashState(userIdKey) || {},
+    [userIdKey]
+  );
+
   const [users, setUsers] = useState([]);
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [blockedUsers, setBlockedUsers] = useState([]);
-  const [activeUserId, setActiveUserId] = useState("");
+  const [activeUserId, setActiveUserId] = useState(
+    typeof initialDashState.activeUserId === "string"
+      ? initialDashState.activeUserId
+      : ""
+  );
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [error, setError] = useState("");
   const [friendActionError, setFriendActionError] = useState("");
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mainTab, setMainTab] = useState("chats");
+  const [mainTab, setMainTab] = useState(
+    typeof initialDashState.mainTab === "string"
+      ? initialDashState.mainTab
+      : "chats"
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [callActive, setCallActive] = useState(false);
+
+  useEffect(() => {
+    if (!userIdKey) return;
+    try {
+      localStorage.setItem(
+        dashStorageKey(userIdKey),
+        JSON.stringify({ activeUserId, mainTab })
+      );
+    } catch {
+      /* ignore quota */
+    }
+  }, [userIdKey, activeUserId, mainTab]);
 
   const {
     registerHandlers,
@@ -38,6 +80,22 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   } = useNotifications();
 
   const friendRequestBaselineRef = useRef(null);
+  const onlineSessionRef = useRef(new Set());
+
+  const applyStickyOnline = useCallback((rows) => {
+    const session = onlineSessionRef.current;
+    return rows.map((row) => {
+      const id = String(row?._id ?? "");
+      if (row?.isOnline) {
+        if (id) session.add(id);
+        return row;
+      }
+      if (id && session.has(id)) {
+        return { ...row, isOnline: true };
+      }
+      return row;
+    });
+  }, []);
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -61,11 +119,11 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
       apiRequest({ path: "/api/auth/friends/requests/incoming", token }),
       apiRequest({ path: "/api/auth/users/blocked", token }),
     ]);
-    setUsers(usersData.users || []);
-    setFriends(friendsData.friends || []);
+    setUsers(applyStickyOnline(usersData.users || []));
+    setFriends(applyStickyOnline(friendsData.friends || []));
     setIncomingRequests(incomingData.requests || []);
     setBlockedUsers(blockedData.blocked || []);
-  }, [token]);
+  }, [token, applyStickyOnline]);
 
   useEffect(() => {
     const load = async () => {
@@ -84,8 +142,9 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   }, [refreshLists]);
 
   useEffect(() => {
+    if (loadingUsers) return;
     if (!friends.length) {
-      setActiveUserId("");
+      if (activeUserId) setActiveUserId("");
       return;
     }
     if (!activeUserId) return;
@@ -93,7 +152,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
     if (!stillFriend) {
       setActiveUserId("");
     }
-  }, [friends, activeUserId]);
+  }, [friends, activeUserId, loadingUsers]);
 
   const sendFriendRequest = async (userId) => {
     setFriendActionError("");
@@ -269,11 +328,16 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
         ? String(payload.lastSeenAt)
         : undefined;
 
+    if (online) {
+      onlineSessionRef.current.add(uid);
+    }
+
     const patchUser = (row) => {
       if (String(row._id) !== uid) return row;
+      const stickyOnline = online || onlineSessionRef.current.has(uid);
       return {
         ...row,
-        isOnline: online,
+        isOnline: stickyOnline ? true : Boolean(row.isOnline),
         ...(lastSeenAt !== undefined ? { lastSeenAt } : {}),
       };
     };
@@ -321,8 +385,17 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
               .join(" ")}
             aria-hidden={mainTab !== "chats"}
           >
-            <div className="dashboard">
-              {isMobile && sidebarOpen && (
+            <div
+              className={[
+                "dashboard",
+                isMobile && !activeUserId && !callActive
+                  ? "dashboard--listOnly"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {isMobile && sidebarOpen && activeUserId && (
                 <button
                   type="button"
                   className="sidebarBackdrop"
@@ -337,7 +410,9 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                 friendActionError={friendActionError}
                 activeUserId={activeUserId}
                 isMobile={isMobile}
-                sidebarOpen={sidebarOpen}
+                sidebarOpen={
+                  sidebarOpen || (isMobile && !activeUserId && !callActive)
+                }
                 onSelectUser={selectUser}
                 onSendFriendRequestByEmail={sendFriendRequestByEmail}
                 onBlockFriend={blockUser}
@@ -352,9 +427,45 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                 selectedUser={activeUser}
                 token={token}
                 isMobile={isMobile}
-                onOpenChats={() => setSidebarOpen(true)}
+                hidePlaceholder={
+                  isMobile ||
+                  Boolean(activeUserId) ||
+                  callActive
+                }
+                onOpenChats={() => {
+                  setActiveUserId("");
+                  setSidebarOpen(true);
+                }}
                 onPresence={handlePresence}
                 getContactLabel={getContactLabel}
+                onCallActiveChange={(active) => {
+                  setCallActive(active);
+                  if (active) {
+                    setMainTab("chats");
+                    if (isMobile) setSidebarOpen(false);
+                  }
+                }}
+                onIncomingCall={(info) => {
+                  setMainTab("chats");
+                  if (isMobile) setSidebarOpen(false);
+                  if (
+                    typeof Notification !== "undefined" &&
+                    document.hidden &&
+                    Notification.permission === "granted"
+                  ) {
+                    try {
+                      new Notification(
+                        info.isVideo ? "Incoming video call" : "Incoming voice call",
+                        {
+                          body: info.peerLabel || "Tap to answer",
+                          icon: "/favicon.svg",
+                        }
+                      );
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }}
               />
             </div>
           </div>

@@ -398,6 +398,24 @@
     transform: translateX(0);
   }
 
+  .dashboard--listOnly .sidebar {
+    position: relative;
+    top: auto;
+    left: auto;
+    bottom: auto;
+    width: 100%;
+    flex: 1;
+    z-index: 1;
+    transform: none;
+    box-shadow: none;
+    border-right: none;
+    transition: none;
+  }
+
+  .waShell--chatsTab .dashboard--listOnly .sidebar {
+    bottom: auto;
+  }
+
   .requestActions {
     flex-direction: column;
     align-items: stretch;

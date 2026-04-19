@@ -69,9 +69,12 @@ const ChatWindow = ({
   selectedUser,
   token,
   isMobile = false,
+  hidePlaceholder = false,
   onOpenChats,
   onPresence,
   getContactLabel,
+  onCallActiveChange,
+  onIncomingCall,
 }) => {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
@@ -136,6 +139,10 @@ const ChatWindow = ({
   const markReadTimerRef = useRef(null);
   const onPresenceRef = useRef(onPresence);
   const getContactLabelRef = useRef(getContactLabel);
+  const onCallActiveChangeRef = useRef(onCallActiveChange);
+  onCallActiveChangeRef.current = onCallActiveChange;
+  const onIncomingCallRef = useRef(onIncomingCall);
+  onIncomingCallRef.current = onIncomingCall;
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
@@ -285,6 +292,24 @@ const ChatWindow = ({
     }
   }, [isMicMuted]);
 
+  const acquireVideoTrack = useCallback(async (facing) => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: facing } },
+      });
+      const t = s.getVideoTracks()[0];
+      if (t) return t;
+    } catch {
+      /* fall through */
+    }
+    const generic = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: true,
+    });
+    return generic.getVideoTracks()[0];
+  }, []);
+
   const toggleCameraOff = useCallback(async () => {
     const stream = localCallStreamRef.current;
     if (!stream) return;
@@ -292,12 +317,10 @@ const ChatWindow = ({
     setIsCameraOff(next);
     const tracks = stream.getVideoTracks();
     if (!next) {
-      // Turning camera back ON
       const liveTrack = tracks.find((t) => t.readyState === "live");
       if (liveTrack) {
         liveTrack.enabled = true;
       } else {
-        // Track is dead — re-acquire from camera
         try {
           const pc = pcRef.current;
           const newTrack = await acquireVideoTrack(cameraFacing);
@@ -362,24 +385,6 @@ const ChatWindow = ({
     },
     [token]
   );
-
-  const acquireVideoTrack = useCallback(async (facing) => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: facing } },
-      });
-      const t = s.getVideoTracks()[0];
-      if (t) return t;
-    } catch {
-      /* fall through */
-    }
-    const generic = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: true,
-    });
-    return generic.getVideoTracks()[0];
-  }, []);
 
   const switchCamera = useCallback(async () => {
     const pc = pcRef.current;
@@ -791,13 +796,20 @@ const ChatWindow = ({
         return;
       }
       const fromId = String(payload.senderId);
+      const peerLabel =
+        getContactLabelRef.current?.(fromId) || "Incoming call";
       setIncomingCall(payload);
       setCallState({
         phase: "incoming",
         peerId: fromId,
-        peerLabel: getContactLabelRef.current?.(fromId) || "Incoming call",
+        peerLabel,
         isVideo: Boolean(payload.isVideo),
         direction: "incoming",
+      });
+      onIncomingCallRef.current?.({
+        senderId: fromId,
+        peerLabel,
+        isVideo: Boolean(payload.isVideo),
       });
     });
 
@@ -1227,7 +1239,15 @@ const ChatWindow = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  if (!selectedUser) {
+  const callOverlayActive =
+    Boolean(incomingCall) || callState.phase !== "idle";
+
+  useEffect(() => {
+    onCallActiveChangeRef.current?.(callOverlayActive);
+  }, [callOverlayActive]);
+
+  if (!selectedUser && !callOverlayActive) {
+    if (hidePlaceholder) return null;
     return (
       <div className="chatWindow chatWindow--fill chatPlaceholder">
         <div className="chatPlaceholderInner">
@@ -1248,6 +1268,8 @@ const ChatWindow = ({
 
   return (
     <div className="chatWindow chatWindow--fill">
+      {selectedUser && (
+      <>
       <div className="chatHeader">
         {isMobile && onOpenChats && (
           <button
@@ -1491,6 +1513,8 @@ const ChatWindow = ({
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
 
       {(incomingCall || callState.phase !== "idle") && (() => {
@@ -1900,6 +1924,7 @@ const ChatWindow = ({
         );
       })()}
 
+      {selectedUser && (
       <div className="chatInput">
         {voiceError && <p className="chatVoiceError">{voiceError}</p>}
         {isRecording ? (
@@ -2086,6 +2111,7 @@ const ChatWindow = ({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
