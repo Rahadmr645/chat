@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { IconChevronLeft } from "../../assets/icons/chatIcons.jsx";
 import "../sidebar/Sidebar.css";
 import "./ChatSettingsPanel.css";
 import { apiUploadProfilePhoto } from "../../services/api.js";
@@ -228,7 +229,7 @@ const ChatSettingsPanel = ({
             aria-label={view === VIEWS.HOME ? "Close settings" : "Back to settings home"}
             onClick={handleHeaderBack}
           >
-            ←
+            <IconChevronLeft />
           </button>
           <h2 id="chat-settings-title" className="chatSettingsTitle">
             {titles[view]}

@@ -78,48 +78,9 @@
   flex-shrink: 0;
 }
 
-.chatHeaderIconBtn {
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: #aebac1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.chatHeaderIconBtn:hover,
-.chatHeaderIconBtn:focus-visible {
-  background: #2a3942;
-  color: #e9edef;
-  outline: none;
-}
-
 .chatHdrIcon {
   width: 22px;
   height: 22px;
-}
-
-.chatBackBtn {
-  flex-shrink: 0;
-  margin-top: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: #e9edef;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.chatBackBtn:hover {
-  background: #2a3942;
 }
 
 .onlineDot {
@@ -177,71 +138,139 @@
   flex-direction: row-reverse;
 }
 
-.messageRowMenuColumn {
-  flex-shrink: 0;
+.messageBubbleWrap {
   position: relative;
-  align-self: stretch;
+  flex: 0 1 auto;
+  max-width: 100%;
   display: flex;
-  align-items: flex-start;
-  padding-top: 2px;
+  flex-direction: column;
+  align-items: stretch;
 }
 
-.messageMenuBtn {
-  width: 28px;
-  height: 28px;
+/* WhatsApp-style message context: reaction strip + icon menu beside the bubble */
+.messageCtxPopover {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 24px));
+  pointer-events: auto;
+}
+
+.messageCtxPopover--received {
+  left: calc(100% + 6px);
+  align-items: flex-start;
+}
+
+.messageCtxPopover--sent {
+  right: calc(100% + 6px);
+  align-items: flex-end;
+}
+
+.messageCtxReactions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 5px;
+  background: #202c33;
+  border: 1px solid #2f3b43;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.messageCtxReactionBtn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
   background: transparent;
-  color: #8696a0;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
   cursor: pointer;
   display: grid;
   place-items: center;
 }
 
-.messageMenuBtn:hover,
-.messageMenuBtn:focus-visible {
-  background: #2a3942;
-  color: #e9edef;
+.messageCtxReactionBtn:hover,
+.messageCtxReactionBtn:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
   outline: none;
 }
 
-.messageDeleteMenu {
-  position: absolute;
-  top: 28px;
-  right: 0;
-  z-index: 40;
-  min-width: 188px;
-  padding: 6px 0;
+.messageCtxReactionBtn--more {
+  font-size: 18px;
+  font-weight: 600;
+  color: #8696a0;
+}
+
+.messageCtxMenu {
+  min-width: 200px;
+  padding: 4px 0;
   background: #233138;
   border: 1px solid #2a3942;
   border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-.messageRow.received .messageDeleteMenu {
-  right: auto;
-  left: 0;
-}
-
-.messageDeleteMenuItem {
-  display: block;
+.messageCtxMenuItem {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   width: 100%;
-  padding: 10px 14px;
+  padding: 8px 16px 8px 12px;
   border: none;
   background: none;
   text-align: left;
   color: #e9edef;
   font-size: 14px;
+  line-height: 1.25;
   cursor: pointer;
 }
 
-.messageDeleteMenuItem:hover {
+.messageCtxMenuItem:hover,
+.messageCtxMenuItem:focus-visible {
   background: #2a3942;
+  outline: none;
 }
 
-.messageDeleteMenuItem--danger {
+.messageCtxMenuIcon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: #aebac1;
+}
+
+.messageCtxMenuIcon .messageCtxIcon,
+.messageCtxMenuIcon .waVoiceDockTrashSvg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.messageCtxMenuLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.messageCtxMenuDivider {
+  height: 1px;
+  margin: 4px 10px;
+  background: rgba(134, 150, 160, 0.22);
+}
+
+.messageCtxMenuItem--danger,
+.messageCtxMenuItem--danger .messageCtxMenuIcon {
   color: #ff9e9e;
 }
 
@@ -379,21 +408,6 @@
   display: none;
 }
 
-.voiceMsgPlayBtn {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 50%;
-  background: #53bdeb;
-  color: #0b141a;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
 .voiceMsgWave {
   display: flex;
   align-items: flex-end;
@@ -502,30 +516,6 @@
   background: linear-gradient(180deg, #2a3942 0%, #1f2c33 100%);
   border: 1px solid #3d4a52;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 6px 20px rgba(0, 0, 0, 0.35);
-}
-
-.waVoiceDockTrash {
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  border: none;
-  border-radius: 50%;
-  background: #374248;
-  color: #e9edef;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: background 0.15s ease, transform 0.1s ease;
-}
-
-.waVoiceDockTrash:hover,
-.waVoiceDockTrash:focus-visible {
-  background: #4a5560;
-  outline: none;
-}
-
-.waVoiceDockTrash:active {
-  transform: scale(0.96);
 }
 
 .waVoiceDockTrashSvg {
@@ -669,38 +659,6 @@
 
 .waVoiceDockSend .chatComposeIcon {
   color: #fff;
-}
-
-.chatComposeBtn {
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: #8696a0;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.chatComposeBtn:hover,
-.chatComposeBtn:focus-visible {
-  color: #e9edef;
-  outline: none;
-}
-
-.chatComposeBtn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.chatComposeBtn--primary {
-  color: #8696a0;
-}
-
-.chatComposeBtn--send {
-  color: #00a884;
 }
 
 .chatComposeIcon {
@@ -877,33 +835,6 @@
   flex: 1;
 }
 
-.chatComposerCloseBtn,
-.chatComposerReplaceBtn {
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #aebac1;
-  cursor: pointer;
-}
-
-.chatComposerCloseBtn {
-  width: 36px;
-  height: 36px;
-  font-size: 24px;
-  line-height: 1;
-}
-
-.chatComposerReplaceBtn {
-  padding: 8px 10px;
-  font-size: 13px;
-}
-
-.chatComposerCloseBtn:hover,
-.chatComposerReplaceBtn:hover {
-  background: #2a3942;
-  color: #e9edef;
-}
-
 .chatComposerBody {
   flex: 1;
   min-height: 0;
@@ -981,17 +912,6 @@
   outline: none;
   font-family: inherit;
   font-size: 14px;
-}
-
-.chatComposerSendBtn {
-  border: none;
-  border-radius: 22px;
-  background: #00a884;
-  color: #fff;
-  padding: 10px 16px;
-  font-weight: 600;
-  cursor: pointer;
-  min-width: 84px;
 }
 
 .chatComposerSendBtn:disabled,
@@ -1326,52 +1246,12 @@
   right: 0;
   bottom: 24px;
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 18px;
   padding: 0 16px;
   z-index: 6;
-}
-
-.callCtrlBtn {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  transition: background 0.15s ease, transform 0.1s ease;
-}
-
-.callCtrlBtn:hover {
-  background: rgba(255, 255, 255, 0.28);
-}
-
-.callCtrlBtn:active {
-  transform: scale(0.95);
-}
-
-.callCtrlBtn--off {
-  background: rgba(255, 255, 255, 0.85);
-  color: #1f2a33;
-}
-
-.callCtrlBtn--off:hover {
-  background: #fff;
-}
-
-.callCtrlBtn--end {
-  background: #ea4335;
-  color: #fff;
-}
-
-.callCtrlBtn--end:hover {
-  background: #d33b2c;
 }
 
 .callCtrlIcon {

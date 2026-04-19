@@ -43,12 +43,19 @@ import {
   IconAttach,
   IconCall,
   IconChatBubble,
+  IconChevronLeft,
   IconEmoji,
   IconEndCall,
   IconMic,
   IconMicOff,
+  IconMsgCopy,
+  IconMsgForward,
+  IconMsgReply,
+  IconMsgStar,
   IconSearch,
+  IconPhoneHandset,
   IconSend,
+  IconSpeakerLoud,
   IconSwitchCamera,
   IconTrash,
   IconVideo,
@@ -61,6 +68,8 @@ const LAST_SEEN_REFRESH_MS = 60_000;
 const RECORDING_UI_TICK_MS = 100;
 const TYPING_STOP_MS = 2000;
 const MARK_READ_DEBOUNCE_MS = 400;
+const MESSAGE_LONG_PRESS_MS = 520;
+const MESSAGE_CTX_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const DEFAULT_RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
@@ -107,7 +116,7 @@ const CallStreamVideo = memo(function CallStreamVideo({
   );
 });
 
-const CallRemoteAudio = memo(function CallRemoteAudio({ stream }) {
+const CallRemoteAudio = memo(function CallRemoteAudio({ stream, outputMode }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
@@ -117,7 +126,44 @@ const CallRemoteAudio = memo(function CallRemoteAudio({ stream }) {
       el.srcObject = next;
     }
   }, [stream]);
-  return <audio ref={ref} autoPlay />;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const earpiece = outputMode === "earpiece";
+    const apply = async () => {
+      try {
+        if (!("setSinkId" in HTMLMediaElement.prototype)) {
+          el.volume = earpiece ? 0.42 : 1;
+          return;
+        }
+        const outs = (await navigator.mediaDevices.enumerateDevices()).filter(
+          (d) => d.kind === "audiooutput"
+        );
+        const label = (d) => (d.label || "").toLowerCase();
+        if (earpiece) {
+          const comm = outs.find((d) =>
+            /communication|earpiece|receiver|telephony|phone call/i.test(label(d))
+          );
+          if (comm?.deviceId) {
+            await el.setSinkId(comm.deviceId);
+            el.volume = 0.95;
+          } else {
+            await el.setSinkId("");
+            el.volume = 0.4;
+          }
+        } else {
+          await el.setSinkId("");
+          el.volume = 1;
+        }
+      } catch {
+        el.volume = earpiece ? 0.42 : 1;
+      }
+    };
+    void apply();
+  }, [outputMode, stream]);
+
+  return <audio ref={ref} autoPlay playsInline />;
 });
 
 const ChatWindow = ({
@@ -165,7 +211,10 @@ const ChatWindow = ({
   const [isPipDragging, setIsPipDragging] = useState(false);
   const [peerMuted, setPeerMuted] = useState(false);
   const [callChatOpen, setCallChatOpen] = useState(false);
+  /** Voice-call listen mode: earpiece (normal) vs loudspeaker — uses setSinkId when supported. */
+  const [callVoiceOutputMode, setCallVoiceOutputMode] = useState("earpiece");
   const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
+  const messageLongPressRef = useRef({ timer: null, startX: 0, startY: 0 });
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
 
@@ -341,6 +390,7 @@ const ChatWindow = ({
     setPipPos({ x: 18, y: 18 });
     setPeerMuted(false);
     setCallChatOpen(false);
+    setCallVoiceOutputMode("earpiece");
     setCallState({
       phase: "idle",
       peerId: "",
@@ -1396,6 +1446,58 @@ const ChatWindow = ({
     [token]
   );
 
+  const handleCopyMessageText = useCallback(async (message) => {
+    const text = String(message?.text ?? "").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setOpenMessageMenuId(null);
+    } catch {
+      window.alert("Could not copy.");
+    }
+  }, []);
+
+  const clearMessageLongPressTimer = useCallback(() => {
+    const t = messageLongPressRef.current.timer;
+    if (t != null) {
+      clearTimeout(t);
+      messageLongPressRef.current.timer = null;
+    }
+  }, []);
+
+  const onMessageBubblePointerDown = useCallback(
+    (e, messageId) => {
+      if (e.button !== 0) return;
+      clearMessageLongPressTimer();
+      messageLongPressRef.current.startX = e.clientX;
+      messageLongPressRef.current.startY = e.clientY;
+      messageLongPressRef.current.timer = window.setTimeout(() => {
+        messageLongPressRef.current.timer = null;
+        setOpenMessageMenuId(messageId);
+      }, MESSAGE_LONG_PRESS_MS);
+    },
+    [clearMessageLongPressTimer]
+  );
+
+  const onMessageBubblePointerMove = useCallback(
+    (e) => {
+      const { timer, startX, startY } = messageLongPressRef.current;
+      if (timer == null) return;
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+      if (dx > 12 || dy > 12) {
+        clearMessageLongPressTimer();
+      }
+    },
+    [clearMessageLongPressTimer]
+  );
+
+  const onMessageBubblePointerEnd = useCallback(() => {
+    clearMessageLongPressTimer();
+  }, [clearMessageLongPressTimer]);
+
+  useEffect(() => () => clearMessageLongPressTimer(), [clearMessageLongPressTimer]);
+
   const onTextChange = (e) => {
     const v = e.target.value;
     setText(v);
@@ -1485,7 +1587,7 @@ const ChatWindow = ({
             onClick={onOpenChats}
             aria-label="Back to chat list"
           >
-            ←
+            <IconChevronLeft />
           </button>
         )}
         <div className="chatHeaderAvatar" aria-hidden="true">
@@ -1566,6 +1668,8 @@ const ChatWindow = ({
               ? /^(📹|📞)\s+(.+)$/.exec(msg.text.trim())
               : null;
           const isCallSummary = Boolean(callMatch);
+          const canCopyText =
+            !isRevoked && Boolean(String(msg.text ?? "").trim());
           return (
             <div
               key={msg._id}
@@ -1574,10 +1678,26 @@ const ChatWindow = ({
             >
               <div className="messageRowBubbles">
                 <div
-                  className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}${
-                    isCallSummary ? " bubbleCall" : ""
-                  }${isRevoked ? " bubble--revoked" : ""}`}
+                  className={`messageBubbleWrap ${
+                    isSent ? "messageBubbleWrap--sent" : "messageBubbleWrap--received"
+                  }`}
                 >
+                  <div
+                    className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}${
+                      isCallSummary ? " bubbleCall" : ""
+                    }${isRevoked ? " bubble--revoked" : ""}`}
+                    title="Hold for message options"
+                    onPointerDown={(e) => onMessageBubblePointerDown(e, msg._id)}
+                    onPointerMove={onMessageBubblePointerMove}
+                    onPointerUp={onMessageBubblePointerEnd}
+                    onPointerLeave={onMessageBubblePointerEnd}
+                    onPointerCancel={onMessageBubblePointerEnd}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      clearMessageLongPressTimer();
+                      setOpenMessageMenuId(msg._id);
+                    }}
+                  >
                   {isRevoked ? (
                     <div className="bubbleText bubbleText--revoked">
                       This message was deleted.
@@ -1653,47 +1773,134 @@ const ChatWindow = ({
                     )}
                   </div>
                 </div>
-                <div className="messageRowMenuColumn">
-                  <button
-                    type="button"
-                    className="messageMenuBtn"
-                    aria-label="Message options"
-                    aria-expanded={openMessageMenuId === msg._id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setOpenMessageMenuId((cur) => (cur === msg._id ? null : msg._id));
-                    }}
-                  >
-                    ⋮
-                  </button>
                   {openMessageMenuId === msg._id && (
-                    <div className="messageDeleteMenu" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="messageDeleteMenuItem"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleDeleteMessage(msg._id, "me");
-                        }}
-                      >
-                        Delete for me
-                      </button>
-                      {isSent && !isRevoked && (
+                    <div
+                      className={`messageCtxPopover ${
+                        isSent ? "messageCtxPopover--sent" : "messageCtxPopover--received"
+                      }`}
+                      role="presentation"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="messageCtxReactions" role="toolbar" aria-label="Quick reactions">
+                        {MESSAGE_CTX_QUICK_REACTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className="messageCtxReactionBtn"
+                            aria-label={`React with ${emoji}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              comingSoon("Reactions")();
+                            }}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          className="messageCtxReactionBtn messageCtxReactionBtn--more"
+                          aria-label="More reactions"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            comingSoon("Reactions")();
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                      <div className="messageCtxMenu" role="menu">
                         <button
                           type="button"
                           role="menuitem"
-                          className="messageDeleteMenuItem messageDeleteMenuItem--danger"
+                          className="messageCtxMenuItem"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (window.confirm("Delete this message for everyone?")) {
-                              void handleDeleteMessage(msg._id, "everyone");
-                            }
+                            comingSoon("Reply")();
                           }}
                         >
-                          Delete for everyone
+                          <span className="messageCtxMenuIcon" aria-hidden="true">
+                            <IconMsgReply />
+                          </span>
+                          <span className="messageCtxMenuLabel">Reply</span>
                         </button>
-                      )}
+                        {canCopyText ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="messageCtxMenuItem"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleCopyMessageText(msg);
+                            }}
+                          >
+                            <span className="messageCtxMenuIcon" aria-hidden="true">
+                              <IconMsgCopy />
+                            </span>
+                            <span className="messageCtxMenuLabel">Copy</span>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="messageCtxMenuItem"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            comingSoon("Forward")();
+                          }}
+                        >
+                          <span className="messageCtxMenuIcon" aria-hidden="true">
+                            <IconMsgForward />
+                          </span>
+                          <span className="messageCtxMenuLabel">Forward</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="messageCtxMenuItem"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            comingSoon("Star")();
+                          }}
+                        >
+                          <span className="messageCtxMenuIcon" aria-hidden="true">
+                            <IconMsgStar />
+                          </span>
+                          <span className="messageCtxMenuLabel">Star</span>
+                        </button>
+                        <div className="messageCtxMenuDivider" role="separator" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="messageCtxMenuItem"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeleteMessage(msg._id, "me");
+                          }}
+                        >
+                          <span className="messageCtxMenuIcon" aria-hidden="true">
+                            <IconTrash />
+                          </span>
+                          <span className="messageCtxMenuLabel">Delete for me</span>
+                        </button>
+                        {isSent && !isRevoked ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="messageCtxMenuItem messageCtxMenuItem--danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm("Delete this message for both of you?")) {
+                                void handleDeleteMessage(msg._id, "everyone");
+                              }
+                            }}
+                          >
+                            <span className="messageCtxMenuIcon" aria-hidden="true">
+                              <IconTrash />
+                            </span>
+                            <span className="messageCtxMenuLabel">Delete for both</span>
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1833,7 +2040,10 @@ const ChatWindow = ({
             aria-label="Call dialog"
           >
             {!isFullscreenVideo && remoteCallStream && (
-              <CallRemoteAudio stream={remoteCallStream} />
+              <CallRemoteAudio
+                stream={remoteCallStream}
+                outputMode={isFullscreenAudio ? callVoiceOutputMode : "speaker"}
+              />
             )}
             <div
               className={`callCard${
@@ -2051,6 +2261,30 @@ const ChatWindow = ({
                       title={isMicMuted ? "Unmute" : "Mute"}
                     >
                       {isMicMuted ? <IconMicOff /> : <IconMic />}
+                    </button>
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${
+                        callVoiceOutputMode === "earpiece" ? " callCtrlBtn--routeOn" : ""
+                      }`}
+                      onClick={() => setCallVoiceOutputMode("earpiece")}
+                      aria-label="Earpiece"
+                      aria-pressed={callVoiceOutputMode === "earpiece"}
+                      title="Earpiece (normal)"
+                    >
+                      <IconPhoneHandset />
+                    </button>
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${
+                        callVoiceOutputMode === "speaker" ? " callCtrlBtn--routeOn" : ""
+                      }`}
+                      onClick={() => setCallVoiceOutputMode("speaker")}
+                      aria-label="Speaker"
+                      aria-pressed={callVoiceOutputMode === "speaker"}
+                      title="Speaker (loud)"
+                    >
+                      <IconSpeakerLoud />
                     </button>
                     <button
                       type="button"

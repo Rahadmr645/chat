@@ -24,30 +24,6 @@
   min-height: 12px;
 }
 
-.waRailBtn {
-  position: relative;
-  width: 52px;
-  height: 52px;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: #aebac1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-
-.waRailBtn:hover,
-.waRailBtn:focus-visible {
-  background: #2a3942;
-  color: #e9edef;
-  outline: none;
-}
-
-.waRailBtn--active {
-  color: #00a884;
-}
-
 .waRailBtn svg {
   width: 24px;
   height: 24px;
