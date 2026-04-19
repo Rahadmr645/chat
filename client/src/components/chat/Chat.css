@@ -1748,12 +1748,12 @@ video.callStreamVideo--mirror {
 }
 
 @media (max-width: 480px) {
-  /* Mobile self-view PiP: slightly shorter portrait preview */
+  /* Mobile self-view PiP: shorter portrait preview */
   .callLocalPip {
     width: clamp(118px, 40vw, 156px);
-    aspect-ratio: 7 / 16;
+    aspect-ratio: 10 / 16;
     height: auto;
-    max-height: min(78vh, 520px);
+    max-height: min(64vh, 420px);
     border-radius: 18px;
   }
 
