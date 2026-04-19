@@ -79,6 +79,7 @@ const MESSAGE_LONG_PRESS_MS = 520;
 const MESSAGE_CTX_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const MESSAGE_CTX_EXTRA_REACTIONS = ["🎉", "🔥", "💯", "👎", "✨", "🙌", "😭", "🤝"];
 const LONG_MESSAGE_PREVIEW_CHARS = 220;
+const MAX_REPLY_PREVIEW_CHARS = 120;
 const DEFAULT_RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
@@ -242,6 +243,8 @@ const ChatWindow = ({
 }) => {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+  const [replyDraft, setReplyDraft] = useState(null);
+  const [starredMessageIds, setStarredMessageIds] = useState(() => new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [peerTyping, setPeerTyping] = useState(false);
@@ -291,6 +294,7 @@ const ChatWindow = ({
   const docInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const chatTextareaRef = useRef(null);
   const attachMenuRef = useRef(null);
   const streamRef = useRef(null);
   const pcRef = useRef(null);
@@ -341,6 +345,42 @@ const ChatWindow = ({
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
+
+  const starStorageKey = useMemo(() => {
+    const uid = String(currentUser?._id || "").trim();
+    return uid ? `rchat_starred_messages_${uid}` : "";
+  }, [currentUser?._id]);
+
+  useEffect(() => {
+    if (!starStorageKey) {
+      setStarredMessageIds(new Set());
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(starStorageKey);
+      if (!raw) {
+        setStarredMessageIds(new Set());
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        setStarredMessageIds(new Set());
+        return;
+      }
+      setStarredMessageIds(new Set(parsed.map((id) => String(id))));
+    } catch {
+      setStarredMessageIds(new Set());
+    }
+  }, [starStorageKey]);
+
+  useEffect(() => {
+    if (!starStorageKey) return;
+    localStorage.setItem(starStorageKey, JSON.stringify([...starredMessageIds]));
+  }, [starStorageKey, starredMessageIds]);
+
+  useEffect(() => {
+    setReplyDraft(null);
+  }, [selectedUserId]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -1966,7 +2006,10 @@ const ChatWindow = ({
     setError("");
     setMediaSending(true);
     try {
-      const textOut = String(pendingCaption || "").trim();
+      const captionText = String(pendingCaption || "").trim();
+      const textOut = replyDraft?.preview
+        ? `↪ ${replyDraft.author}: ${replyDraft.preview}\n${captionText}`.trim()
+        : captionText;
       const savedMessage = await apiUploadMediaMessage({
         token,
         receiverId: selectedUserId,
@@ -1976,6 +2019,7 @@ const ChatWindow = ({
       });
       setMessages((prev) => [...prev, savedMessage]);
       closeAttachmentComposer();
+      setReplyDraft(null);
     } catch (err) {
       setError(err.message || "Could not send media.");
     } finally {
@@ -2019,7 +2063,11 @@ const ChatWindow = ({
     clearTimeout(typingStopTimerRef.current);
 
     try {
-      const body = { receiverId: selectedUserId, text: text.trim() };
+      const typedText = String(text || "").trim();
+      const textOut = replyDraft?.preview
+        ? `↪ ${replyDraft.author}: ${replyDraft.preview}\n${typedText}`.trim()
+        : typedText;
+      const body = { receiverId: selectedUserId, text: textOut };
 
       const savedMessage = await apiRequest({
         method: "POST",
@@ -2030,6 +2078,7 @@ const ChatWindow = ({
 
       setMessages((prev) => [...prev, savedMessage]);
       setText("");
+      setReplyDraft(null);
       setError("");
     } catch (err) {
       setError(err.message || "Could not send message.");
@@ -2094,6 +2143,73 @@ const ChatWindow = ({
     } catch {
       window.alert("Could not copy.");
     }
+  }, []);
+
+  const normalizePreviewText = useCallback((input) => {
+    const text = String(input ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return "";
+    if (text.length <= MAX_REPLY_PREVIEW_CHARS) return text;
+    return `${text.slice(0, MAX_REPLY_PREVIEW_CHARS - 1)}…`;
+  }, []);
+
+  const formatMessageForReplyPreview = useCallback(
+    (message) => {
+      const kind = String(message?.kind || "text");
+      const text = normalizePreviewText(message?.displayText ?? message?.text ?? "");
+      if (kind === "voice") return "Voice message";
+      if (kind === "image") return text || "Photo";
+      if (kind === "video") return text || "Video";
+      if (kind === "audio") return text || "Audio file";
+      if (kind === "file") return text || "Document";
+      return text || "Message";
+    },
+    [normalizePreviewText]
+  );
+
+  const handleReplyMessage = useCallback(
+    (message) => {
+      const author =
+        String(message?.senderId) === String(currentUser?._id)
+          ? "You"
+          : String(selectedUser?.fullname || selectedUser?.username || "Contact");
+      const preview = formatMessageForReplyPreview(message);
+      setReplyDraft({
+        messageId: String(message?._id || ""),
+        author,
+        preview,
+      });
+      setOpenMessageMenuId(null);
+      setTimeout(() => chatTextareaRef.current?.focus(), 0);
+    },
+    [currentUser?._id, selectedUser?.fullname, selectedUser?.username, formatMessageForReplyPreview]
+  );
+
+  const handleForwardMessage = useCallback(
+    (message) => {
+      const payload = formatMessageForReplyPreview(message);
+      if (!payload) return;
+      setText((prev) => {
+        const existing = String(prev || "").trim();
+        return existing ? `${existing}\n${payload}` : payload;
+      });
+      setOpenMessageMenuId(null);
+      setTimeout(() => chatTextareaRef.current?.focus(), 0);
+    },
+    [formatMessageForReplyPreview]
+  );
+
+  const handleToggleStarMessage = useCallback((messageId) => {
+    const id = String(messageId || "");
+    if (!id) return;
+    setStarredMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setOpenMessageMenuId(null);
   }, []);
 
   const clearMessageLongPressTimer = useCallback(() => {
@@ -2165,8 +2281,10 @@ const ChatWindow = ({
         const id = String(message._id);
         const base = {
           ...message,
+          _id: id,
           senderId: String(message.senderId),
           reactions: message.reactions ?? [],
+          starred: starredMessageIds.has(id),
         };
         const kind = message.kind || "text";
         if (message.textE2ee && message.textCipherIv && !message.deletedForEveryone) {
@@ -2174,7 +2292,7 @@ const ChatWindow = ({
         }
         return { ...base, displayText: message.text ?? "" };
       }),
-    [messages]
+    [messages, starredMessageIds]
   );
 
   useEffect(() => {
@@ -2463,6 +2581,11 @@ const ChatWindow = ({
                   )}
                   <div className="bubbleFooter">
                     <span className="msgTime">{time}</span>
+                    {msg.starred ? (
+                      <span className="msgStar" title="Starred message" aria-label="Starred message">
+                        ★
+                      </span>
+                    ) : null}
                     {isSent && (
                       <span
                         className={`ticks ${msg.seen ? "ticksRead" : "ticksSent"}`}
@@ -2570,7 +2693,7 @@ const ChatWindow = ({
                           className="messageCtxMenuItem"
                           onClick={(e) => {
                             e.stopPropagation();
-                            comingSoon("Reply")();
+                            handleReplyMessage(msg);
                           }}
                         >
                           <span className="messageCtxMenuIcon" aria-hidden="true">
@@ -2600,7 +2723,7 @@ const ChatWindow = ({
                           className="messageCtxMenuItem"
                           onClick={(e) => {
                             e.stopPropagation();
-                            comingSoon("Forward")();
+                            handleForwardMessage(msg);
                           }}
                         >
                           <span className="messageCtxMenuIcon" aria-hidden="true">
@@ -2614,13 +2737,15 @@ const ChatWindow = ({
                           className="messageCtxMenuItem"
                           onClick={(e) => {
                             e.stopPropagation();
-                            comingSoon("Star")();
+                            handleToggleStarMessage(msg._id);
                           }}
                         >
                           <span className="messageCtxMenuIcon" aria-hidden="true">
                             <IconMsgStar />
                           </span>
-                          <span className="messageCtxMenuLabel">Star</span>
+                          <span className="messageCtxMenuLabel">
+                            {msg.starred ? "Unstar" : "Star"}
+                          </span>
                         </button>
                         <div className="messageCtxMenuDivider" role="separator" />
                         <button
@@ -3311,6 +3436,24 @@ const ChatWindow = ({
       {selectedUser && (
       <div className="chatInput">
         {voiceError && <p className="chatVoiceError">{voiceError}</p>}
+        {replyDraft && !isRecording ? (
+          <div className="chatReplyBar" role="status" aria-live="polite">
+            <div className="chatReplyBarAccent" aria-hidden="true" />
+            <div className="chatReplyBarBody">
+              <p className="chatReplyBarTitle">Replying to {replyDraft.author}</p>
+              <p className="chatReplyBarText">{replyDraft.preview}</p>
+            </div>
+            <button
+              type="button"
+              className="chatReplyBarClose"
+              aria-label="Cancel reply"
+              title="Cancel reply"
+              onClick={() => setReplyDraft(null)}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         {isRecording ? (
           <div className="waVoiceDock" role="status" aria-live="polite">
             <button
@@ -3467,6 +3610,7 @@ const ChatWindow = ({
               <IconEmoji />
             </button>
             <textarea
+              ref={chatTextareaRef}
               className="chatTextarea"
               rows={1}
               placeholder={mediaSending ? "Sending media..." : "Type a message"}

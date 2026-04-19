@@ -559,6 +559,13 @@
   flex-shrink: 0;
 }
 
+.msgStar {
+  color: #ffd56a;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .msgVoiceDuration {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -597,6 +604,68 @@
   gap: 8px;
   flex-shrink: 0;
   background: #202c33;
+}
+
+.chatReplyBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1f2c33;
+  border: 1px solid #2f3f49;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.chatReplyBarAccent {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: #00a884;
+  flex-shrink: 0;
+}
+
+.chatReplyBarBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.chatReplyBarTitle {
+  margin: 0;
+  color: #00a884;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.chatReplyBarText {
+  margin: 2px 0 0;
+  color: #e9edef;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatReplyBarClose {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #9fb0b9;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.chatReplyBarClose:hover,
+.chatReplyBarClose:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9edef;
+  outline: none;
 }
 
 .chatInputRow {
@@ -1901,13 +1970,35 @@ video.callStreamVideo--mirror {
   }
 
   .messageCtxPopover {
-    max-width: min(280px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 12px));
+    position: fixed;
+    left: 50%;
+    right: auto;
+    top: auto;
+    bottom: max(74px, calc(74px + env(safe-area-inset-bottom, 0px)));
+    transform: translateX(-50%);
+    width: min(94vw, 340px);
+    max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 12px);
+    max-height: min(62vh, calc(100dvh - 120px));
+    align-items: stretch;
+    z-index: 70;
+  }
+
+  .messageCtxPopover--received,
+  .messageCtxPopover--sent {
+    left: 50%;
+    right: auto;
+    align-items: stretch;
   }
 
   .messageCtxMenu {
-    min-width: min(200px, 72vw);
+    min-width: 0;
+    width: 100%;
     max-height: min(48vh, 300px, calc(100vh - 180px));
     max-height: min(48vh, 300px, calc(100dvh - 180px));
+  }
+
+  .messageCtxReactions {
+    justify-content: center;
   }
 
   .messageCtxMenuItem {
