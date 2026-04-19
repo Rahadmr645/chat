@@ -1,0 +1,241 @@
+.callsTab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #111b21;
+  color: #e9edef;
+}
+
+.callsTabHeader {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
+  min-height: 56px;
+  border-bottom: 1px solid #2a3942;
+  background: #202c33;
+}
+
+.callsTabHeader h1 {
+  margin: 0;
+  font-size: clamp(1.15rem, 3.5vw, 1.45rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.callsTabHint {
+  margin: 0;
+  font-size: 12px;
+  color: #8696a0;
+  max-width: 42vw;
+  text-align: right;
+  line-height: 1.35;
+}
+
+.callsTabBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.callsTabState {
+  margin: 0;
+  padding: 28px 20px;
+  text-align: center;
+  color: #8696a0;
+  font-size: 14px;
+}
+
+.callsTabState--error {
+  color: #ff9b9b;
+}
+
+.callsTabState--errorWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.callsTabRetryBtn {
+  padding: 10px 20px;
+  border-radius: 24px;
+  border: none;
+  background: #00a884;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.callsTabRetryBtn:hover,
+.callsTabRetryBtn:focus-visible {
+  filter: brightness(1.06);
+  outline: none;
+}
+
+.callsDayGroup {
+  padding: 10px 0 4px;
+}
+
+.callsDayLabel {
+  margin: 0;
+  padding: 6px max(16px, env(safe-area-inset-right, 0px)) 4px max(16px, env(safe-area-inset-left, 0px));
+  font-size: 13px;
+  font-weight: 600;
+  color: #00a884;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.callsRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px max(14px, env(safe-area-inset-right, 0px)) 10px max(14px, env(safe-area-inset-left, 0px));
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.callsRow:hover,
+.callsRow:focus-visible {
+  background: #1f2c33;
+  outline: none;
+}
+
+.callsRowAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #2a3942;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.callsRowAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.callsRowMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.callsRowTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.callsRowName {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.callsRowTime {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #8696a0;
+  font-variant-numeric: tabular-nums;
+}
+
+.callsRowSub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: #8696a0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.callsRowSub--missed {
+  color: #ff6b6b;
+}
+
+.callsRowSubIcon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.callsRowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.callsRowCallBtn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: #00a88422;
+  color: #00a884;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease;
+}
+
+.callsRowCallBtn:hover,
+.callsRowCallBtn:focus-visible {
+  background: #00a88438;
+  outline: none;
+}
+
+.callsRowCallBtn--video {
+  color: #53bdeb;
+  background: #53bdeb22;
+}
+
+.callsRowCallBtn--video:hover,
+.callsRowCallBtn--video:focus-visible {
+  background: #53bdeb38;
+}
+
+.callsRowCallBtn svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (max-width: 480px) {
+  .callsTabHeader {
+    padding-top: 12px;
+    padding-bottom: 10px;
+  }
+
+  .callsRowAvatar {
+    width: 44px;
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .callsRowName {
+    font-size: 15px;
+  }
+
+  .callsRowCallBtn {
+    width: 44px;
+    height: 44px;
+  }
+}

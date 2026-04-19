@@ -28,6 +28,7 @@ import {
   subscribeVoiceRecordingStatus,
 } from "../../socket/Socket.js";
 import { apiRequest, apiUploadMediaMessage, apiUploadVoice } from "../../services/api.js";
+import { persistCallLog } from "../../services/callLogApi.js";
 import {
   formatLastSeen,
   formatMessageTime,
@@ -172,12 +173,15 @@ const ChatWindow = ({
   token,
   isMobile = false,
   hidePlaceholder = false,
+  pendingOutgoingCall = null,
+  onPendingOutgoingCallConsumed,
   onOpenChats,
   onPresence,
   getContactLabel,
   onCallActiveChange,
   onIncomingCall,
   onCallPhaseChange,
+  onRefreshDashboard,
 }) => {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
@@ -206,6 +210,7 @@ const ChatWindow = ({
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [cameraFacing, setCameraFacing] = useState("user");
   const [callStartedAt, setCallStartedAt] = useState(null);
+  const callStartedAtRef = useRef(null);
   const [isLocalMain, setIsLocalMain] = useState(false);
   const [pipPos, setPipPos] = useState({ x: 18, y: 18 });
   const [isPipDragging, setIsPipDragging] = useState(false);
@@ -236,6 +241,8 @@ const ChatWindow = ({
   const disconnectCleanupTimerRef = useRef(null);
   const callStateRef = useRef(callState);
   const incomingCallRef = useRef(incomingCall);
+  const tokenRef = useRef(token);
+  const pendingOutgoingLaunchKeyRef = useRef("");
   const chunksRef = useRef([]);
   const recordStartRef = useRef(0);
   const startingRecordRef = useRef(false);
@@ -255,6 +262,8 @@ const ChatWindow = ({
   onIncomingCallRef.current = onIncomingCall;
   const onCallPhaseChangeRef = useRef(onCallPhaseChange);
   onCallPhaseChangeRef.current = onCallPhaseChange;
+  const onRefreshDashboardRef = useRef(onRefreshDashboard);
+  onRefreshDashboardRef.current = onRefreshDashboard;
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
@@ -266,6 +275,14 @@ const ChatWindow = ({
   useEffect(() => {
     incomingCallRef.current = incomingCall;
   }, [incomingCall]);
+
+  useEffect(() => {
+    callStartedAtRef.current = callStartedAt;
+  }, [callStartedAt]);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
 
   useEffect(() => {
     const loadRtcConfig = async () => {
@@ -495,7 +512,7 @@ const ChatWindow = ({
   }, [acquireVideoTrack, isCameraOff]);
 
   const postCallSummaryMessage = useCallback(
-    async ({ receiverId, isVideo, startedAt, status }) => {
+    async ({ receiverId, isVideo, startedAt, status, direction = "outgoing" }) => {
       if (!receiverId || !token) return;
       const icon = isVideo ? "📹" : "📞";
       const label = isVideo ? "Video call" : "Voice call";
@@ -509,9 +526,32 @@ const ChatWindow = ({
         text = `${icon} ${label} · Cancelled`;
       } else if (status === "missed") {
         text = `${icon} Missed ${label.toLowerCase()}`;
+      } else if (status === "unavailable") {
+        text = `${icon} ${label} · Unavailable`;
       } else {
         return;
       }
+      const outcomeMap = {
+        completed: "completed",
+        declined: "declined",
+        cancelled: "cancelled",
+        missed: "missed",
+        unavailable: "unavailable",
+      };
+      const outcome = outcomeMap[status];
+      const durationSec =
+        status === "completed" && startedAt
+          ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+          : 0;
+      const dir = direction || "outgoing";
+      const logPayload = {
+        token,
+        peerId: String(receiverId),
+        isVideo,
+        direction: dir,
+        outcome,
+        durationSec,
+      };
       try {
         const saved = await apiRequest({
           method: "POST",
@@ -521,8 +561,10 @@ const ChatWindow = ({
         });
         setMessages((prev) => [...prev, saved]);
       } catch {
-        /* ignore — call summary is best-effort */
+        /* chat summary optional */
       }
+      if (outcome) void persistCallLog(logPayload);
+      onRefreshDashboardRef.current?.();
     },
     [token]
   );
@@ -758,6 +800,8 @@ const ChatWindow = ({
     const peerId = callState.peerId || incomingCall?.senderId;
     const wasVideo = Boolean(callState.isVideo || incomingCall?.isVideo);
     const startedAt = callStartedAt;
+    const direction =
+      callState.direction || (incomingCall ? "incoming" : "outgoing");
     if (me && peerId) {
       emitCallEnd({ senderId: String(me), receiverId: String(peerId) });
     }
@@ -767,6 +811,7 @@ const ChatWindow = ({
         isVideo: wasVideo,
         startedAt,
         status: startedAt ? "completed" : "cancelled",
+        direction,
       });
     }
     cleanupCall();
@@ -774,6 +819,7 @@ const ChatWindow = ({
   }, [
     callState.peerId,
     callState.isVideo,
+    callState.direction,
     cleanupCall,
     incomingCall?.senderId,
     incomingCall?.isVideo,
@@ -794,6 +840,7 @@ const ChatWindow = ({
         isVideo: wasVideo,
         startedAt: null,
         status: "declined",
+        direction: "incoming",
       });
     }
     setIncomingCall(null);
@@ -874,6 +921,28 @@ const ChatWindow = ({
     },
     [callState.phase, cleanupCall, createPeerConnection, getCallMediaStream, selectedUser?.name]
   );
+
+  useEffect(() => {
+    if (!pendingOutgoingCall) {
+      pendingOutgoingLaunchKeyRef.current = "";
+      return;
+    }
+    if (!pendingOutgoingCall.peerId || !selectedUserId || !token) return;
+    if (String(pendingOutgoingCall.peerId) !== String(selectedUserId)) return;
+    if (callStateRef.current.phase !== "idle") return;
+    const key = `${pendingOutgoingCall.peerId}-${pendingOutgoingCall.isVideo}`;
+    if (pendingOutgoingLaunchKeyRef.current === key) return;
+    pendingOutgoingLaunchKeyRef.current = key;
+    const { isVideo } = pendingOutgoingCall;
+    onPendingOutgoingCallConsumed?.();
+    void startOutgoingCall({ isVideo });
+  }, [
+    pendingOutgoingCall,
+    selectedUserId,
+    token,
+    startOutgoingCall,
+    onPendingOutgoingCallConsumed,
+  ]);
 
   const acceptIncomingCall = useCallback(async () => {
     if (!incomingCall?.offer || !incomingCall?.senderId) return;
@@ -1055,6 +1124,15 @@ const ChatWindow = ({
     const unsubCallRejected = subscribeCallRejected((payload) => {
       const me = String(currentUserIdRef.current || "");
       if (!payload?.senderId || String(payload.receiverId) !== me) return;
+      const peerId = String(payload.senderId);
+      const isVideo = Boolean(callStateRef.current.isVideo);
+      void postCallSummaryMessage({
+        receiverId: peerId,
+        isVideo,
+        startedAt: null,
+        status: "declined",
+        direction: "outgoing",
+      });
       setCallError("Call declined.");
       cleanupCall();
     });
@@ -1062,11 +1140,52 @@ const ChatWindow = ({
     const unsubCallEnded = subscribeCallEnded((payload) => {
       const me = String(currentUserIdRef.current || "");
       if (!payload?.senderId || String(payload.receiverId) !== me) return;
+      const peerId = String(payload.senderId);
+      const cs = callStateRef.current;
+      const started = callStartedAtRef.current;
+      const phase = cs.phase;
+      const isVideo = Boolean(cs.isVideo);
+      const dir = cs.direction || "incoming";
+      const tok = tokenRef.current;
+      if (tok && peerId) {
+        if (phase === "in-call" && started) {
+          const durationSec = Math.max(1, Math.round((Date.now() - started) / 1000));
+          void persistCallLog({
+            token: tok,
+            peerId,
+            isVideo,
+            direction: dir,
+            outcome: "completed",
+            durationSec,
+          });
+        } else if (phase === "incoming" || phase === "calling" || phase === "connecting") {
+          void persistCallLog({
+            token: tok,
+            peerId,
+            isVideo,
+            direction: dir,
+            outcome: "cancelled",
+            durationSec: 0,
+          });
+        }
+      }
+      onRefreshDashboardRef.current?.();
       setCallError("Call ended.");
       cleanupCall();
     });
 
     const unsubCallUnavailable = subscribeCallUnavailable(() => {
+      const peerId = callStateRef.current?.peerId;
+      const isVideo = Boolean(callStateRef.current?.isVideo);
+      if (peerId) {
+        void postCallSummaryMessage({
+          receiverId: peerId,
+          isVideo,
+          startedAt: null,
+          status: "unavailable",
+          direction: "outgoing",
+        });
+      }
       setCallError("User is unavailable.");
       cleanupCall();
     });
@@ -1100,6 +1219,8 @@ const ChatWindow = ({
     cleanupCall,
     currentUser?._id,
     markConversationRead,
+    postCallSummaryMessage,
+    token,
   ]);
 
   useEffect(() => {

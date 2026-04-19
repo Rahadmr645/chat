@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import messageRoutes from "./routes/messageRoutes.js";
+import callRoutes from "./routes/callRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import { turnCredential, turnUrl, turnUsername } from "./config/env.js";
 
@@ -27,6 +28,7 @@ export function createApp() {
 
   app.use("/api/auth", authRoutes);
   app.use("/api/messages", messageRoutes);
+  app.use("/api/calls", callRoutes);
 
   app.get("/api/rtc-config", (req, res) => {
     const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];

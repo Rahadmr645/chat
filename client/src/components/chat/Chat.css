@@ -17,7 +17,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
   min-height: 60px;
   border-bottom: 1px solid #2a3942;
   color: #e9edef;
@@ -101,14 +101,16 @@
 
 .messages {
   flex: 1;
-  padding: 16px 12px;
+  padding: 16px max(12px, env(safe-area-inset-right, 0px)) 16px max(12px, env(safe-area-inset-left, 0px));
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 6px;
   background-color: #0b141a;
   background-image: radial-gradient(circle at 1px 1px, #222e36 1px, transparent 0);
-  background-size: 22px 22px;
+  background-size: clamp(18px, 5vw, 22px) clamp(18px, 5vw, 22px);
 }
 
 .messageRow {
@@ -158,7 +160,10 @@
   align-items: flex-start;
   gap: 6px;
   width: max-content;
-  max-width: min(280px, calc(100vw - 24px));
+  max-width: min(280px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px));
+  max-height: min(88vh, calc(100vh - 100px));
+  max-height: min(88vh, calc(100dvh - 100px));
+  overflow: hidden;
   pointer-events: auto;
 }
 
@@ -175,7 +180,7 @@
 .messageCtxReactions {
   display: flex;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1px;
   padding: 3px 5px;
@@ -183,6 +188,8 @@
   border: 1px solid #2f3b43;
   border-radius: 999px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .messageCtxReactionBtn {
@@ -213,11 +220,20 @@
 
 .messageCtxMenu {
   min-width: 200px;
+  max-width: 100%;
   padding: 4px 0;
   background: #233138;
   border: 1px solid #2a3942;
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(52vh, 340px, calc(100vh - 200px));
+  max-height: min(52vh, 340px, calc(100dvh - 200px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .messageCtxMenuItem {
@@ -291,8 +307,8 @@
   max-width: min(78%, 420px);
   padding: 6px 8px 4px 10px;
   border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: clamp(13px, 0.25rem + 2.4vw, 15px);
+  line-height: 1.38;
 }
 
 .bubbleSent {
@@ -486,8 +502,8 @@
 .chatInput {
   display: flex;
   flex-direction: column;
-  padding: 8px 12px;
-  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  padding: 8px max(12px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px))
+    max(12px, env(safe-area-inset-left, 0px));
   border-top: 1px solid #2a3942;
   gap: 8px;
   flex-shrink: 0;
@@ -1577,15 +1593,178 @@
 }
 
 @media (max-width: 768px) {
-  .bubble {
-    max-width: min(90%, 340px);
+  .messages {
+    padding: 12px max(10px, env(safe-area-inset-right, 0px)) 12px max(10px, env(safe-area-inset-left, 0px));
+    gap: 5px;
   }
 
-  .messages {
-    padding: 12px 10px;
+  .messageRowBubbles {
+    max-width: min(96%, 560px);
+  }
+
+  .bubble {
+    max-width: min(92%, 480px);
+    padding: 6px 10px 5px 10px;
+    border-radius: 10px;
+  }
+
+  .bubbleVoice {
+    min-width: min(200px, 72vw);
+  }
+
+  .bubbleMedia {
+    width: min(100%, min(300px, 88vw));
+    max-height: min(300px, 52vh);
+  }
+
+  .bubbleAudioFile {
+    width: min(260px, 85vw);
+  }
+
+  .bubbleFileCard {
+    padding: 8px 9px;
+  }
+
+  .msgTime {
+    font-size: 11.5px;
+  }
+
+  .ticks {
+    font-size: 12px;
   }
 
   .chatHeader {
-    padding: 8px 12px;
+    padding: 8px max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px));
+    gap: 10px;
+    min-height: 56px;
+  }
+
+  .chatHeaderAvatar {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+
+  .chatHeaderText h3 {
+    font-size: 15px;
+  }
+
+  .chatHeaderSub,
+  .typingLabel {
+    font-size: 12.5px;
+  }
+
+  .chatHdrIcon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .chatInput {
+    padding: 6px max(10px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px))
+      max(10px, env(safe-area-inset-left, 0px));
+    gap: 6px;
+  }
+
+  .chatTextarea {
+    font-size: 16px;
+    min-height: 46px;
+    padding: 10px 12px;
+  }
+
+  .messageCtxPopover {
+    max-width: min(280px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 12px));
+  }
+
+  .messageCtxMenu {
+    min-width: min(200px, 72vw);
+    max-height: min(48vh, 300px, calc(100vh - 180px));
+    max-height: min(48vh, 300px, calc(100dvh - 180px));
+  }
+
+  .messageCtxMenuItem {
+    font-size: 15px;
+    padding: 9px 14px 9px 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .messages {
+    padding: 10px max(6px, env(safe-area-inset-right, 0px)) 10px max(6px, env(safe-area-inset-left, 0px));
+    gap: 4px;
+    background-size: 18px 18px;
+  }
+
+  .messageRowBubbles {
+    max-width: min(98%, 640px);
+  }
+
+  .bubble {
+    max-width: min(94%, 100%);
+    padding: 5px 9px 4px 9px;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  .bubbleCallText {
+    font-size: 13px;
+  }
+
+  .chatHeader {
+    padding: 6px max(10px, env(safe-area-inset-right, 0px)) 6px max(10px, env(safe-area-inset-left, 0px));
+    min-height: 52px;
+    gap: 8px;
+  }
+
+  .chatHeaderAvatar {
+    width: 34px;
+    height: 34px;
+    font-size: 15px;
+  }
+
+  .chatHeaderText h3 {
+    font-size: 14px;
+  }
+
+  .messageCtxReactionBtn {
+    width: 34px;
+    height: 34px;
+    font-size: 18px;
+  }
+
+  .messageCtxMenuItem {
+    padding: 11px 12px;
+    gap: 11px;
+  }
+
+  .messageCtxMenuIcon {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .messageCtxMenuItem {
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .messages {
+    padding: 18px max(20px, env(safe-area-inset-right, 0px)) 18px max(20px, env(safe-area-inset-left, 0px));
+    gap: 7px;
+  }
+
+  .messageRowBubbles {
+    max-width: min(88%, 560px);
+  }
+
+  .bubble {
+    max-width: min(72%, 520px);
+    font-size: 15px;
+    padding: 7px 10px 5px 11px;
+  }
+
+  .msgTime {
+    font-size: 12px;
   }
 }

@@ -1,5 +1,14 @@
 import { API_URL } from "../config.js";
 
+export const joinApiUrl = (path) => {
+  const base = String(API_URL || "").replace(/\/+$/, "");
+  const p = String(path || "").startsWith("/") ? path : `/${path}`;
+  if (base.endsWith("/api") && p.startsWith("/api/")) {
+    return `${base}${p.slice(4)}`;
+  }
+  return `${base}${p}`;
+};
+
 const buildHeaders = (token, extraHeaders = {}) => {
   const headers = {
     "Content-Type": "application/json",
@@ -14,20 +23,40 @@ const buildHeaders = (token, extraHeaders = {}) => {
 };
 
 export const apiRequest = async ({ method = "GET", path, token, body }) => {
-  const response = await fetch(`${API_URL}${path}`, {
+  const url = joinApiUrl(path);
+  const response = await fetch(url, {
     method,
     headers: buildHeaders(token),
     body: body ? JSON.stringify(body) : undefined,
   });
-  const contentType = response.headers.get("content-type") || "";
-  const isJson = contentType.toLowerCase().includes("application/json");
-  const data = isJson ? await response.json().catch(() => ({})) : {};
-
-  if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+  const raw = await response.text();
+  let data = null;
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = null;
+    }
   }
 
-  if (!isJson) {
+  if (!response.ok) {
+    const fromBody =
+      data && typeof data === "object"
+        ? [data.error, data.message].find((x) => typeof x === "string" && x.trim())
+        : null;
+    const hint404 =
+      response.status === 404
+        ? `Not found (${path}). If you just updated the app, restart the API server so new routes (e.g. /api/calls) are loaded.`
+        : null;
+    const msg =
+      fromBody ||
+      hint404 ||
+      (raw && raw.length < 240 && !raw.trim().startsWith("<") ? raw.trim() : null) ||
+      `Request failed (${response.status})`;
+    throw new Error(msg);
+  }
+
+  if (data == null || typeof data !== "object") {
     throw new Error(
       "Server response is invalid. Restart client dev server and open the latest HTTPS URL."
     );
@@ -42,7 +71,7 @@ export const apiUploadVoice = async ({ token, receiverId, durationSec, blob, fil
   formData.append("durationSec", String(durationSec));
   formData.append("audio", blob, filename);
 
-  const response = await fetch(`${API_URL}/api/messages/voice`, {
+  const response = await fetch(joinApiUrl("/api/messages/voice"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -63,7 +92,7 @@ export const apiUploadProfilePhoto = async ({ token, file }) => {
   const formData = new FormData();
   formData.append("avatar", file);
 
-  const response = await fetch(`${API_URL}/api/auth/profile/photo`, {
+  const response = await fetch(joinApiUrl("/api/auth/profile/photo"), {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -89,7 +118,7 @@ export const apiUploadMediaMessage = async ({
   formData.append("text", String(text || ""));
   formData.append("media", file, file.name || "media");
 
-  const response = await fetch(`${API_URL}/api/messages/media`, {
+  const response = await fetch(joinApiUrl("/api/messages/media"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

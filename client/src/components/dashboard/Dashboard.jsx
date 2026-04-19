@@ -4,6 +4,7 @@ import { NotificationProvider, useNotifications } from "../../context/Notificati
 import WaRail from "../layout/WaRail.jsx";
 import BottomNav from "../bottomnav/BottomNav";
 import TabPlaceholder from "../tabs/TabPlaceholder";
+import CallsTab from "../calls/CallsTab.jsx";
 import Sidebar from "../sidebar/Sidebar";
 import ChatWindow from "../chat/ChatWindow";
 import ChatSettingsPanel from "../settings/ChatSettingsPanel.jsx";
@@ -67,6 +68,8 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [callActive, setCallActive] = useState(false);
+  const [pendingOutgoingCall, setPendingOutgoingCall] = useState(null);
+  const [callLogItems, setCallLogItems] = useState([]);
   const callNotificationRef = useRef(null);
   const ringingActiveRef = useRef(false);
 
@@ -130,17 +133,23 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   }, [mainTab]);
 
   const refreshLists = useCallback(async () => {
-    const [usersData, friendsData, incomingData, blockedData] = await Promise.all([
-      apiRequest({ path: "/api/auth/users", token }),
-      apiRequest({ path: "/api/auth/friends", token }),
-      apiRequest({ path: "/api/auth/friends/requests/incoming", token }),
-      apiRequest({ path: "/api/auth/users/blocked", token }),
-    ]);
-    setUsers(usersData.users || []);
-    setFriends(friendsData.friends || []);
-    setIncomingRequests(incomingData.requests || []);
-    setBlockedUsers(blockedData.blocked || []);
+    const data = await apiRequest({ path: "/api/auth/dashboard", token });
+    setUsers(data.users || []);
+    setFriends(data.friends || []);
+    setIncomingRequests(data.requests || []);
+    setBlockedUsers(data.blocked || []);
+    setCallLogItems(data.callLogs || []);
   }, [token]);
+
+  useEffect(() => {
+    if (mainTab !== "calls" || !token || loadingUsers) return;
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      void refreshLists();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [mainTab, token, loadingUsers, refreshLists]);
 
   useEffect(() => {
     const load = async () => {
@@ -363,6 +372,10 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
     if (isMobile) setSidebarOpen(false);
   };
 
+  const clearPendingOutgoingCall = useCallback(() => {
+    setPendingOutgoingCall(null);
+  }, []);
+
   const shellClass = ["waShell", mainTab === "chats" ? "waShell--chatsTab" : ""]
     .filter(Boolean)
     .join(" ");
@@ -385,7 +398,31 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
         <div className="waMainPane waMainPane--layered">
           {mainTab !== "chats" && (
             <div className="waMainPaneTabOverlay">
-              <TabPlaceholder tab={mainTab} variant="solo" />
+              {mainTab === "calls" ? (
+                <CallsTab
+                  items={callLogItems}
+                  loading={loadingUsers}
+                  error={error}
+                  friends={friends}
+                  onRetry={() => void refreshLists()}
+                  onOpenChat={(userId) => {
+                    selectUser(userId);
+                    setMainTab("chats");
+                  }}
+                  onVoiceCall={(peerId) => {
+                    setPendingOutgoingCall({ peerId: String(peerId), isVideo: false });
+                    selectUser(peerId);
+                    setMainTab("chats");
+                  }}
+                  onVideoCall={(peerId) => {
+                    setPendingOutgoingCall({ peerId: String(peerId), isVideo: true });
+                    selectUser(peerId);
+                    setMainTab("chats");
+                  }}
+                />
+              ) : (
+                <TabPlaceholder tab={mainTab} variant="solo" />
+              )}
             </div>
           )}
           <div
@@ -439,6 +476,8 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                 selectedUser={activeUser}
                 token={token}
                 isMobile={isMobile}
+                pendingOutgoingCall={pendingOutgoingCall}
+                onPendingOutgoingCallConsumed={clearPendingOutgoingCall}
                 hidePlaceholder={
                   isMobile ||
                   Boolean(activeUserId) ||
@@ -448,6 +487,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                   setActiveUserId("");
                   setSidebarOpen(true);
                 }}
+                onRefreshDashboard={refreshLists}
                 onPresence={handlePresence}
                 getContactLabel={getContactLabel}
                 onCallActiveChange={(active) => {

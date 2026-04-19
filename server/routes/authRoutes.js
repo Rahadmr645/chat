@@ -8,6 +8,7 @@ import {
   registerUser,
   updateProfilePhoto,
 } from "../controller/authController.js";
+import { getDashboard } from "../controller/dashboardController.js";
 import {
   acceptFriendRequest,
   blockFromRequest,
@@ -31,6 +32,7 @@ const profileUpload = multer({
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
+router.get("/dashboard", protect, getDashboard);
 router.patch(
   "/profile/photo",
   protect,
