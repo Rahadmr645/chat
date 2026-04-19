@@ -44,6 +44,7 @@ import {
 } from "../../utils/chatFormat.js";
 import { isMessageInThread } from "../../utils/chatThread.js";
 import { aggregateReactions } from "../../utils/messageReactions.js";
+import { playCallEndChime } from "../../utils/callRingtone.js";
 import { socketEntityId } from "../../utils/socketEntityId.js";
 import {
   getPreferredVoiceMimeType,
@@ -277,6 +278,7 @@ const ChatWindow = ({
   const [callChatOpen, setCallChatOpen] = useState(false);
   /** Voice-call listen mode: earpiece (normal) vs loudspeaker — uses setSinkId when supported. */
   const [callVoiceOutputMode, setCallVoiceOutputMode] = useState("earpiece");
+  const [callEndToast, setCallEndToast] = useState("");
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
   const [ctxReactionsExpanded, setCtxReactionsExpanded] = useState(false);
@@ -307,6 +309,8 @@ const ChatWindow = ({
   /** "replace" = swapped camera video; "add" = added video on voice-only call */
   const screenShareModeRef = useRef(null);
   const disconnectCleanupTimerRef = useRef(null);
+  const callEndToastTimerRef = useRef(null);
+  const callEndedFeedbackRef = useRef(() => {});
   const callStateRef = useRef(callState);
   const incomingCallRef = useRef(incomingCall);
   const tokenRef = useRef(token);
@@ -636,6 +640,31 @@ const ChatWindow = ({
       /* ignore */
     }
   }, []);
+
+  const showCallEndedFeedback = useCallback((message = "Call ended") => {
+    playCallEndChime();
+    if (callEndToastTimerRef.current) {
+      clearTimeout(callEndToastTimerRef.current);
+    }
+    setCallEndToast(message);
+    callEndToastTimerRef.current = setTimeout(() => {
+      callEndToastTimerRef.current = null;
+      setCallEndToast("");
+    }, 2800);
+  }, []);
+
+  useEffect(() => {
+    callEndedFeedbackRef.current = showCallEndedFeedback;
+  }, [showCallEndedFeedback]);
+
+  useEffect(
+    () => () => {
+      if (callEndToastTimerRef.current) {
+        clearTimeout(callEndToastTimerRef.current);
+      }
+    },
+    []
+  );
 
   const emitCallMediaStatusToPeer = useCallback(() => {
     const me = currentUserIdRef.current;
@@ -1125,11 +1154,13 @@ const ChatWindow = ({
         if (pc.connectionState === "disconnected") {
           clearTimeout(disconnectCleanupTimerRef.current);
           disconnectCleanupTimerRef.current = setTimeout(() => {
+            callEndedFeedbackRef.current?.("Call disconnected");
             cleanupCall();
             setCallError("Call disconnected.");
           }, 8000);
         }
         if (["failed", "closed"].includes(pc.connectionState)) {
+          callEndedFeedbackRef.current?.("Call ended");
           cleanupCall();
           setCallError("Call connection failed.");
         }
@@ -1281,6 +1312,7 @@ const ChatWindow = ({
     const startedAt = callStartedAt;
     const direction =
       callState.direction || (incomingCall ? "incoming" : "outgoing");
+    showCallEndedFeedback("Call ended");
     if (me && peerId) {
       emitCallEnd({ senderId: String(me), receiverId: String(peerId) });
     }
@@ -1304,12 +1336,14 @@ const ChatWindow = ({
     incomingCall?.isVideo,
     callStartedAt,
     postCallSummaryMessage,
+    showCallEndedFeedback,
   ]);
 
   const rejectIncomingCall = useCallback(() => {
     const me = currentUserIdRef.current;
     const peerId = incomingCall?.senderId;
     const wasVideo = Boolean(incomingCall?.isVideo);
+    showCallEndedFeedback("Call declined");
     if (me && peerId) {
       emitCallReject({ senderId: String(me), receiverId: String(peerId) });
     }
@@ -1324,7 +1358,12 @@ const ChatWindow = ({
     }
     setIncomingCall(null);
     setCallState((prev) => ({ ...prev, phase: "idle" }));
-  }, [incomingCall?.senderId, incomingCall?.isVideo, postCallSummaryMessage]);
+  }, [
+    incomingCall?.senderId,
+    incomingCall?.isVideo,
+    postCallSummaryMessage,
+    showCallEndedFeedback,
+  ]);
 
   const getCallMediaStream = useCallback(async (preferVideo) => {
     if (!window.isSecureContext) {
@@ -1648,7 +1687,7 @@ const ChatWindow = ({
         status: "declined",
         direction: "outgoing",
       });
-      setCallError("Call declined.");
+      callEndedFeedbackRef.current?.("Call declined");
       cleanupCall();
     });
 
@@ -1685,7 +1724,8 @@ const ChatWindow = ({
         }
       }
       onRefreshDashboardRef.current?.();
-      setCallError("Call ended.");
+      callEndedFeedbackRef.current?.("Call ended");
+      setCallError("");
       cleanupCall();
     });
 
@@ -1701,7 +1741,8 @@ const ChatWindow = ({
           direction: "outgoing",
         });
       }
-      setCallError("User is unavailable.");
+      callEndedFeedbackRef.current?.("User unavailable");
+      setCallError("");
       cleanupCall();
     });
 
@@ -2068,38 +2109,46 @@ const ChatWindow = ({
       selectedUser?.encryptionPublicKey ||
       resolveFriendPublicKeyRef.current?.(String(selectedUserId)) ||
       "";
-    if (!peerPk?.trim()) {
-      setError(
-        "This contact has not registered encryption yet. Ask them to open the app once you are friends."
-      );
-      return;
-    }
-    if (!globalThis.crypto?.subtle) {
-      setError("This browser cannot use end-to-end encryption.");
-      return;
-    }
+    const hasSubtle = Boolean(globalThis.crypto?.subtle);
+    const useE2ee = Boolean(peerPk?.trim() && hasSubtle);
 
     try {
-      await ensureDeviceKeys(currentUser._id);
-      await syncMyE2eePublicKey();
-      const enc = await encryptTextForPeer({
-        userId: currentUser._id,
-        peerPublicJwk: String(peerPk),
-        plaintext: text.trim(),
-      });
+      let body;
+      if (useE2ee) {
+        await ensureDeviceKeys(currentUser._id);
+        await syncMyE2eePublicKey();
+        const enc = await encryptTextForPeer({
+          userId: currentUser._id,
+          peerPublicJwk: String(peerPk),
+          plaintext: text.trim(),
+        });
+        body = {
+          receiverId: selectedUserId,
+          text: enc.ciphertextB64,
+          textCipherIv: enc.ivB64,
+        };
+      } else {
+        body = { receiverId: selectedUserId, text: text.trim() };
+        if (hasSubtle && currentUser?._id) {
+          try {
+            await ensureDeviceKeys(currentUser._id);
+            await syncMyE2eePublicKey();
+          } catch {
+            /* still send plaintext */
+          }
+        }
+      }
+
       const savedMessage = await apiRequest({
         method: "POST",
         path: "/api/messages/send",
         token,
-        body: {
-          receiverId: selectedUserId,
-          text: enc.ciphertextB64,
-          textCipherIv: enc.ivB64,
-        },
+        body,
       });
 
       setMessages((prev) => [...prev, savedMessage]);
       setText("");
+      setError("");
     } catch (err) {
       setError(err.message || "Could not send message.");
     }
@@ -2307,6 +2356,11 @@ const ChatWindow = ({
 
   return (
     <div className="chatWindow chatWindow--fill">
+      {callEndToast ? (
+        <div className="callEndToast" role="status" aria-live="polite">
+          {callEndToast}
+        </div>
+      ) : null}
       {selectedUser && (
       <>
       <div className="chatHeader">

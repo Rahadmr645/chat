@@ -999,6 +999,35 @@
   cursor: not-allowed;
 }
 
+.callEndToast {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, calc(24px + env(safe-area-inset-bottom, 0px)));
+  transform: translateX(-50%);
+  z-index: 500;
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: rgba(32, 44, 51, 0.96);
+  color: #e9edef;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  border: 1px solid #3b4a54;
+  pointer-events: none;
+  animation: callEndToastIn 0.22s ease-out;
+}
+
+@keyframes callEndToastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 .callOverlay {
   position: absolute;
   inset: 0;

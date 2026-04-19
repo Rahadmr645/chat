@@ -87,6 +87,45 @@ export const startCallRingtone = () => {
   intervalId = setInterval(playOneRing, 2000);
 };
 
+let lastEndChimeAt = 0;
+const END_CHIME_DEBOUNCE_MS = 500;
+
+/** Short two-tone “hang up” cue so the user notices the call ended (debounced). */
+export const playCallEndChime = () => {
+  const now = Date.now();
+  if (now - lastEndChimeAt < END_CHIME_DEBOUNCE_MS) return;
+  lastEndChimeAt = now;
+
+  const ctx = ensureContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+
+  const t0 = ctx.currentTime;
+  const gain = ctx.createGain();
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(0.14, t0 + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+
+  const o1 = ctx.createOscillator();
+  o1.type = "sine";
+  o1.frequency.setValueAtTime(520, t0);
+  o1.frequency.exponentialRampToValueAtTime(340, t0 + 0.12);
+  o1.connect(gain);
+  o1.start(t0);
+  o1.stop(t0 + 0.14);
+
+  const o2 = ctx.createOscillator();
+  o2.type = "sine";
+  o2.frequency.setValueAtTime(380, t0 + 0.12);
+  o2.frequency.exponentialRampToValueAtTime(260, t0 + 0.32);
+  o2.connect(gain);
+  o2.start(t0 + 0.11);
+  o2.stop(t0 + 0.36);
+};
+
 export const stopCallRingtone = () => {
   if (intervalId) {
     clearInterval(intervalId);

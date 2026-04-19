@@ -6,6 +6,10 @@ import User from "../models/user.js";
 import { isBlockedEitherWay } from "../utils/blocking.js";
 import { emitToUser } from "../socket/socketServer.js";
 import { uploadBufferToCloudinary } from "../utils/cloudinary.js";
+import {
+  decryptAtRestFromStorage,
+  encryptAtRestForStorage,
+} from "../utils/messageAtRestCrypto.js";
 
 const plainMessage = (doc) => (doc?.toObject ? doc.toObject() : doc);
 
@@ -17,7 +21,7 @@ export const messagePayloadForSocket = (doc) => {
     senderId: String(o.senderId),
     receiverId: String(o.receiverId),
     kind: o.kind || "text",
-    text: o.text ?? "",
+    text: decryptAtRestFromStorage(o.text ?? ""),
     seen: Boolean(o.seen),
     durationSec: o.durationSec ?? 0,
     voiceMime: o.voiceMime ?? "",
@@ -148,6 +152,7 @@ export const sendMessage = async (req, res) => {
       };
     }
 
+    payload.text = encryptAtRestForStorage(payload.text);
     const newMessage = await Message.create(payload);
 
     emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
@@ -273,6 +278,7 @@ export const sendMediaMessage = async (req, res) => {
       receiverId,
       kind,
       ...textFields,
+      text: encryptAtRestForStorage(textFields.text ?? ""),
       mediaUrl: uploaded.secure_url || "",
       mediaPublicId: uploaded.public_id || "",
       mediaMime: mime,
