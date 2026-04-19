@@ -6,6 +6,7 @@ import {
   emitCallAnswer,
   emitCallEnd,
   emitCallIceCandidate,
+  emitCallMuteStatus,
   emitCallOffer,
   emitCallReject,
   emitStopTyping,
@@ -15,6 +16,7 @@ import {
   subscribeCallAnswered,
   subscribeCallEnded,
   subscribeCallIceCandidate,
+  subscribeCallMuteStatus,
   subscribeCallRejected,
   subscribeCallUnavailable,
   subscribeIncomingCall,
@@ -102,6 +104,8 @@ const ChatWindow = ({
   const [isLocalMain, setIsLocalMain] = useState(false);
   const [pipPos, setPipPos] = useState({ x: 18, y: 18 });
   const [isPipDragging, setIsPipDragging] = useState(false);
+  const [peerMuted, setPeerMuted] = useState(false);
+  const [callChatOpen, setCallChatOpen] = useState(false);
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
 
@@ -251,6 +255,8 @@ const ChatWindow = ({
     setCallElapsedMs(0);
     setIsLocalMain(false);
     setPipPos({ x: 18, y: 18 });
+    setPeerMuted(false);
+    setCallChatOpen(false);
     setCallState({
       phase: "idle",
       peerId: "",
@@ -268,17 +274,61 @@ const ChatWindow = ({
       t.enabled = !next;
     });
     setIsMicMuted(next);
+    const me = currentUserIdRef.current;
+    const peerId = callStateRef.current?.peerId;
+    if (me && peerId) {
+      emitCallMuteStatus({
+        senderId: String(me),
+        receiverId: String(peerId),
+        muted: next,
+      });
+    }
   }, [isMicMuted]);
 
-  const toggleCameraOff = useCallback(() => {
+  const toggleCameraOff = useCallback(async () => {
     const stream = localCallStreamRef.current;
     if (!stream) return;
     const next = !isCameraOff;
-    stream.getVideoTracks().forEach((t) => {
-      t.enabled = !next;
-    });
     setIsCameraOff(next);
-  }, [isCameraOff]);
+    const tracks = stream.getVideoTracks();
+    if (!next) {
+      // Turning camera back ON
+      const liveTrack = tracks.find((t) => t.readyState === "live");
+      if (liveTrack) {
+        liveTrack.enabled = true;
+      } else {
+        // Track is dead — re-acquire from camera
+        try {
+          const pc = pcRef.current;
+          const newTrack = await acquireVideoTrack(cameraFacing);
+          if (!newTrack) return;
+          for (const t of tracks) {
+            stream.removeTrack(t);
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+          const sender = pc
+            ?.getSenders()
+            .find((s) => s.track && s.track.kind === "video");
+          if (sender) await sender.replaceTrack(newTrack);
+          stream.addTrack(newTrack);
+          newTrack.enabled = true;
+          setLocalCallStream(stream);
+          setCallError("");
+        } catch (err) {
+          setIsCameraOff(true);
+          setCallError(err?.message || "Could not start video source.");
+        }
+      }
+    } else {
+      tracks.forEach((t) => {
+        t.enabled = false;
+      });
+    }
+  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
 
   const postCallSummaryMessage = useCallback(
     async ({ receiverId, isVideo, startedAt, status }) => {
@@ -313,33 +363,102 @@ const ChatWindow = ({
     [token]
   );
 
+  const acquireVideoTrack = useCallback(async (facing) => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: facing } },
+      });
+      const t = s.getVideoTracks()[0];
+      if (t) return t;
+    } catch {
+      /* fall through */
+    }
+    const generic = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: true,
+    });
+    return generic.getVideoTracks()[0];
+  }, []);
+
   const switchCamera = useCallback(async () => {
     const pc = pcRef.current;
     const stream = localCallStreamRef.current;
     if (!pc || !stream) return;
     const nextFacing = cameraFacing === "user" ? "environment" : "user";
-    try {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: nextFacing } },
-      });
-      const newVideoTrack = newStream.getVideoTracks()[0];
-      if (!newVideoTrack) return;
-      const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
-      if (sender) await sender.replaceTrack(newVideoTrack);
-      const oldVideoTracks = stream.getVideoTracks();
-      oldVideoTracks.forEach((t) => {
-        stream.removeTrack(t);
+
+    const oldVideoTracks = stream.getVideoTracks();
+    oldVideoTracks.forEach((t) => {
+      stream.removeTrack(t);
+      try {
         t.stop();
-      });
+      } catch {
+        /* ignore */
+      }
+    });
+    setLocalCallStream(stream);
+
+    try {
+      const newVideoTrack = await acquireVideoTrack(nextFacing);
+      if (!newVideoTrack) throw new Error("No camera available.");
+      const sender = pc
+        .getSenders()
+        .find((s) => s.track && s.track.kind === "video");
+      if (sender) await sender.replaceTrack(newVideoTrack);
       stream.addTrack(newVideoTrack);
       newVideoTrack.enabled = !isCameraOff;
       setLocalCallStream(stream);
       setCameraFacing(nextFacing);
+      setCallError("");
     } catch (err) {
-      setCallError(err?.message || "Could not switch camera.");
+      try {
+        const fallback = await acquireVideoTrack(cameraFacing);
+        if (fallback) {
+          const sender = pc
+            .getSenders()
+            .find((s) => s.track && s.track.kind === "video");
+          if (sender) await sender.replaceTrack(fallback);
+          stream.addTrack(fallback);
+          fallback.enabled = !isCameraOff;
+          setLocalCallStream(stream);
+          setCallError("Could not switch camera. Reverted.");
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      setCallError(err?.message || "Could not start video source.");
     }
-  }, [cameraFacing, isCameraOff]);
+  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
+
+  const reacquireCamera = useCallback(async () => {
+    const pc = pcRef.current;
+    const stream = localCallStreamRef.current;
+    if (!pc || !stream) return;
+    if (!callStateRef.current?.isVideo) return;
+    try {
+      const newTrack = await acquireVideoTrack(cameraFacing);
+      if (!newTrack) return;
+      for (const t of stream.getVideoTracks()) {
+        stream.removeTrack(t);
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      const sender = pc
+        .getSenders()
+        .find((s) => s.track && s.track.kind === "video");
+      if (sender) await sender.replaceTrack(newTrack);
+      stream.addTrack(newTrack);
+      newTrack.enabled = !isCameraOff;
+      setLocalCallStream(stream);
+      setCallError("");
+    } catch (err) {
+      setCallError(err?.message || "Could not restart camera.");
+    }
+  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
 
   const swapCallViews = useCallback(() => {
     setIsLocalMain((prev) => !prev);
@@ -350,6 +469,28 @@ const ChatWindow = ({
       setCallStartedAt(Date.now());
     }
   }, [callState.phase, callStartedAt]);
+
+  useEffect(() => {
+    if (!localCallStream || !callState.isVideo || isCameraOff) return undefined;
+    const videoTrack = localCallStream.getVideoTracks()[0];
+    if (!videoTrack) return undefined;
+    const handleEnded = () => {
+      void reacquireCamera();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const t = localCallStreamRef.current?.getVideoTracks()[0];
+      if (!t || t.readyState === "ended" || !t.enabled) {
+        void reacquireCamera();
+      }
+    };
+    videoTrack.addEventListener("ended", handleEnded);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      videoTrack.removeEventListener("ended", handleEnded);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [localCallStream, callState.isVideo, isCameraOff, reacquireCamera]);
 
   useEffect(() => {
     if (!callStartedAt) return undefined;
@@ -709,6 +850,14 @@ const ChatWindow = ({
       cleanupCall();
     });
 
+    const unsubCallMute = subscribeCallMuteStatus((payload) => {
+      const me = String(currentUserIdRef.current || "");
+      if (!payload?.senderId || String(payload.receiverId) !== me) return;
+      const peerId = callStateRef.current?.peerId;
+      if (peerId && String(peerId) !== String(payload.senderId)) return;
+      setPeerMuted(Boolean(payload.muted));
+    });
+
     return () => {
       unsubMsg();
       unsubTyping();
@@ -721,6 +870,7 @@ const ChatWindow = ({
       unsubCallRejected();
       unsubCallEnded();
       unsubCallUnavailable();
+      unsubCallMute();
       disconnectSocket();
     };
   }, [
@@ -1434,7 +1584,15 @@ const ChatWindow = ({
 
                   <div className="callTopBar">
                     <p className="callTopName">{peerName}</p>
-                    <p className="callTopStatus">{statusText}</p>
+                    <p className="callTopStatus">
+                      {statusText}
+                      {peerMuted && (
+                        <span className="callPeerMutedBadge" title="Muted">
+                          <IconMicOff />
+                          <span>muted</span>
+                        </span>
+                      )}
+                    </p>
                   </div>
 
                   <div
@@ -1535,7 +1693,8 @@ const ChatWindow = ({
                     </button>
                     <button
                       type="button"
-                      className="callCtrlBtn"
+                      className={`callCtrlBtn${callChatOpen ? " callCtrlBtn--off" : ""}`}
+                      onClick={() => setCallChatOpen((v) => !v)}
                       aria-label="Chat"
                       title="Chat"
                     >
@@ -1566,7 +1725,15 @@ const ChatWindow = ({
 
                   <div className="callTopBar">
                     <p className="callTopName">{peerName}</p>
-                    <p className="callTopStatus">{statusText}</p>
+                    <p className="callTopStatus">
+                      {statusText}
+                      {peerMuted && (
+                        <span className="callPeerMutedBadge" title="Muted">
+                          <IconMicOff />
+                          <span>muted</span>
+                        </span>
+                      )}
+                    </p>
                   </div>
 
                   <div className="callAudioCenter">
@@ -1608,7 +1775,8 @@ const ChatWindow = ({
                     </button>
                     <button
                       type="button"
-                      className="callCtrlBtn"
+                      className={`callCtrlBtn${callChatOpen ? " callCtrlBtn--off" : ""}`}
+                      onClick={() => setCallChatOpen((v) => !v)}
                       aria-label="Chat"
                       title="Chat"
                     >
@@ -1668,6 +1836,64 @@ const ChatWindow = ({
                     )}
                   </div>
                 </>
+              )}
+
+              {(isFullscreenVideo || isFullscreenAudio) && callChatOpen && (
+                <div className="callChatPanel" role="dialog" aria-label="In-call chat">
+                  <div className="callChatPanelHead">
+                    <span>Chat with {peerName}</span>
+                    <button
+                      type="button"
+                      className="callChatPanelClose"
+                      aria-label="Close chat"
+                      onClick={() => setCallChatOpen(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="callChatPanelBody">
+                    {normalizedMessages.length === 0 && (
+                      <p className="callChatPanelEmpty">No messages yet.</p>
+                    )}
+                    {normalizedMessages.slice(-50).map((msg) => {
+                      const isSent = msg.senderId === String(currentUser._id);
+                      return (
+                        <div
+                          key={msg._id}
+                          className={`callChatMsg${
+                            isSent ? " callChatMsg--sent" : " callChatMsg--received"
+                          }`}
+                        >
+                          {msg.text || (msg.kind ? `[${msg.kind}]` : "")}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <form
+                    className="callChatPanelForm"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleSend();
+                    }}
+                  >
+                    <input
+                      type="text"
+                      className="callChatPanelInput"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      placeholder="Type a message"
+                      autoFocus
+                    />
+                    <button
+                      type="submit"
+                      className="callChatPanelSend"
+                      aria-label="Send"
+                      disabled={!text.trim()}
+                    >
+                      <IconSend />
+                    </button>
+                  </form>
+                </div>
               )}
             </div>
           </div>

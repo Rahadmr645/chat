@@ -108,6 +108,16 @@ export const emitCallEnd = ({ senderId, receiverId }) => {
   }
 };
 
+export const emitCallMuteStatus = ({ senderId, receiverId, muted }) => {
+  if (socket) {
+    socket.emit("callMuteStatus", {
+      senderId: String(senderId),
+      receiverId: String(receiverId),
+      muted: Boolean(muted),
+    });
+  }
+};
+
 export const subscribeIncomingMessages = (callback) => {
   if (!socket) return () => {};
 
@@ -193,6 +203,13 @@ export const subscribeCallUnavailable = (callback) => {
   const handler = (data) => callback(data);
   socket.on("callUnavailable", handler);
   return () => socket?.off("callUnavailable", handler);
+};
+
+export const subscribeCallMuteStatus = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callMuteStatus", handler);
+  return () => socket?.off("callMuteStatus", handler);
 };
 
 export const disconnectSocket = () => {

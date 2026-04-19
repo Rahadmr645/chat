@@ -165,6 +165,16 @@ export function attachSocket(httpServer) {
       });
     });
 
+    socket.on("callMuteStatus", (data) => {
+      const { senderId, receiverId, muted } = data || {};
+      if (!senderId || !receiverId) return;
+      emitToUserSockets(io, receiverId, "callMuteStatus", {
+        senderId: String(senderId),
+        receiverId: String(receiverId),
+        muted: Boolean(muted),
+      });
+    });
+
     socket.on("disconnect", () => {
       const { userId, wentOffline } = removeUserSocket(socket.id);
       if (!userId || !wentOffline) return;
