@@ -6,6 +6,7 @@ import User from "../models/user.js";
 import { isBlockedEitherWay } from "../utils/blocking.js";
 import { emitToUser } from "../socket/socketServer.js";
 import { uploadBufferToCloudinary } from "../utils/cloudinary.js";
+import { chatThreadFolderName } from "../utils/chatThreadPath.js";
 import {
   decryptAtRestFromStorage,
   encryptAtRestForStorage,
@@ -193,7 +194,9 @@ export const sendVoiceMessage = async (req, res) => {
       return res.status(403).json({ error: "Messaging is not allowed" });
     }
 
-    await fs.mkdir(VOICE_DIR, { recursive: true });
+    const threadDir = chatThreadFolderName(senderId, receiverId);
+    const threadVoiceDir = path.join(VOICE_DIR, threadDir);
+    await fs.mkdir(threadVoiceDir, { recursive: true });
 
     const mime = String(req.file.mimetype || "audio/webm");
     const ext = /mp4|m4a|aac|mpeg|video\/mp4/i.test(mime) ? "m4a" : "webm";
@@ -207,7 +210,7 @@ export const sendVoiceMessage = async (req, res) => {
       voiceMime: mime,
     });
 
-    const filePath = path.join(VOICE_DIR, `${msg._id}.${ext}`);
+    const filePath = path.join(threadVoiceDir, `${msg._id}.${ext}`);
     try {
       await fs.writeFile(filePath, buf);
     } catch (err) {
@@ -256,8 +259,9 @@ export const sendMediaMessage = async (req, res) => {
       return res.status(403).json({ error: "Messaging is not allowed" });
     }
 
+    const threadFolder = chatThreadFolderName(senderId, receiverId);
     const uploaded = await uploadBufferToCloudinary(file.buffer, {
-      folder: "rchat/messages",
+      folder: `rchat/messages/${threadFolder}`,
       resource_type: "auto",
     });
 
@@ -321,10 +325,13 @@ export const getVoiceAudio = async (req, res) => {
       return res.status(gate.status).json({ error: gate.error });
     }
 
-    const base = path.join(VOICE_DIR, String(message._id));
+    const threadDir = chatThreadFolderName(message.senderId, message.receiverId);
+    const id = String(message._id);
     const candidates = [
-      `${base}.webm`,
-      `${base}.m4a`,
+      path.join(VOICE_DIR, threadDir, `${id}.webm`),
+      path.join(VOICE_DIR, threadDir, `${id}.m4a`),
+      path.join(VOICE_DIR, `${id}.webm`),
+      path.join(VOICE_DIR, `${id}.m4a`),
     ];
     let filePath = null;
     for (const p of candidates) {
@@ -481,12 +488,17 @@ export const deleteMessage = async (req, res) => {
     await message.save();
 
     if (wasVoice) {
+      const threadDir = chatThreadFolderName(message.senderId, message.receiverId);
       for (const ext of [".webm", ".m4a"]) {
-        const p = path.join(VOICE_DIR, `${msgIdStr}${ext}`);
-        try {
-          await fs.unlink(p);
-        } catch {
-          /* ignore missing file */
+        for (const p of [
+          path.join(VOICE_DIR, threadDir, `${msgIdStr}${ext}`),
+          path.join(VOICE_DIR, `${msgIdStr}${ext}`),
+        ]) {
+          try {
+            await fs.unlink(p);
+          } catch {
+            /* ignore missing file */
+          }
         }
       }
     }
