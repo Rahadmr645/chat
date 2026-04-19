@@ -60,7 +60,7 @@ export async function ensureDeviceKeys(userId) {
     "pkcs8",
     b64Decode(stored),
     { name: "ECDH", namedCurve: "P-256" },
-    false,
+    true,
     ["deriveBits"]
   );
   const publicJwkString = await publicJwkFromPrivate(privateKey);
@@ -76,7 +76,7 @@ async function loadPrivateKey(userId) {
     "pkcs8",
     b64Decode(stored),
     { name: "ECDH", namedCurve: "P-256" },
-    false,
+    true,
     ["deriveBits"]
   );
 }
