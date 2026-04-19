@@ -1,5 +1,6 @@
 .notifCenter {
-  position: relative;
+  position: static;
+  flex-shrink: 0;
 }
 
 .notifCenter__btn {
@@ -23,12 +24,30 @@
   pointer-events: none;
 }
 
+.notifCenter__backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  border: none;
+  padding: 0;
+  margin: 0;
+  z-index: 199;
+  cursor: pointer;
+}
+
 .notifCenter__panel {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: min(380px, calc(100vw - 24px));
-  max-height: min(480px, 70vh);
+  left: auto;
+  box-sizing: border-box;
+  width: min(380px, 100%);
+  max-width: min(380px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 80px));
+  max-height: min(520px, calc(100dvh - 80px));
   display: flex;
   flex-direction: column;
   background: #233138;
@@ -39,6 +58,26 @@
   overflow: hidden;
 }
 
+.notifCenter__closeBtn {
+  display: none;
+  border: none;
+  background: transparent;
+  color: #aebac1;
+  font-size: 24px;
+  line-height: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.notifCenter__closeBtn:hover {
+  color: #e9edef;
+  background: #2a3942;
+}
+
 .notifCenter__head {
   display: flex;
   align-items: center;
@@ -47,6 +86,8 @@
   padding: 12px 14px;
   border-bottom: 1px solid #2a3942;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .notifCenter__title {
@@ -60,6 +101,11 @@
   display: flex;
   gap: 10px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .notifCenter__linkBtn {
@@ -86,6 +132,8 @@
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .notifCenter__banner:hover {
@@ -104,6 +152,7 @@
   color: #8696a0;
   font-size: 14px;
   line-height: 1.45;
+  overflow-wrap: break-word;
 }
 
 .notifCenter__row {
@@ -151,12 +200,19 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .notifCenter__rowTitle {
   font-weight: 600;
   color: #e9edef;
   font-size: 15px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notifCenter__rowTime {
@@ -201,4 +257,119 @@
 .notifCenter__rowDismiss:hover {
   color: #e9edef;
   background: #2a3942;
+}
+
+@media (max-width: 600px) {
+  .notifCenter__backdrop {
+    display: block;
+  }
+
+  .notifCenter__panel {
+    position: fixed;
+    top: auto;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 88vh;
+    border-radius: 16px 16px 0 0;
+    border: none;
+    border-top: 1px solid #2a3942;
+    animation: notifSheetUp 220ms ease-out;
+  }
+
+  .notifCenter__head {
+    padding: 14px 14px 12px;
+    position: sticky;
+    top: 0;
+    background: #233138;
+    z-index: 1;
+  }
+
+  .notifCenter__title {
+    font-size: 1.05rem;
+  }
+
+  .notifCenter__headActions {
+    gap: 6px;
+    align-items: center;
+  }
+
+  .notifCenter__linkBtn {
+    font-size: 14px;
+    padding: 8px 6px;
+    min-height: 36px;
+  }
+
+  .notifCenter__closeBtn {
+    display: inline-flex;
+  }
+
+  .notifCenter__banner {
+    font-size: 13.5px;
+    padding: 12px 14px;
+  }
+
+  .notifCenter__list {
+    padding-bottom: env(safe-area-inset-bottom, 8px);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .notifCenter__rowMain {
+    padding: 14px 10px 14px 14px;
+    gap: 12px;
+  }
+
+  .notifCenter__rowTitle {
+    font-size: 15px;
+  }
+
+  .notifCenter__rowPreview {
+    font-size: 14px;
+  }
+
+  .notifCenter__rowTime {
+    font-size: 12px;
+  }
+
+  .notifCenter__rowDismiss {
+    width: 44px;
+    font-size: 24px;
+  }
+
+  .notifCenter__empty {
+    padding: 28px 18px;
+    font-size: 14.5px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 360px) {
+  .notifCenter__title {
+    font-size: 1rem;
+  }
+
+  .notifCenter__linkBtn {
+    font-size: 13px;
+  }
+
+  .notifCenter__rowMain {
+    padding: 12px 8px 12px 12px;
+  }
+}
+
+@keyframes notifSheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notifCenter__panel {
+    animation: none;
+  }
 }

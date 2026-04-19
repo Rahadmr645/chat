@@ -1,0 +1,19 @@
+{
+  "name": "RChat",
+  "short_name": "RChat",
+  "description": "Realtime chat with voice and video calls",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b141a",
+  "theme_color": "#0b141a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

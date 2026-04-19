@@ -75,6 +75,7 @@ const ChatWindow = ({
   getContactLabel,
   onCallActiveChange,
   onIncomingCall,
+  onCallPhaseChange,
 }) => {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
@@ -122,6 +123,10 @@ const ChatWindow = ({
   const pcRef = useRef(null);
   const rtcConfigRef = useRef(DEFAULT_RTC_CONFIG);
   const localCallStreamRef = useRef(null);
+  const isCameraOffRef = useRef(false);
+  const cameraFacingRef = useRef("user");
+  const reacquireCameraInFlightRef = useRef(false);
+  const visibilityReacquireTimerRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
   const disconnectCleanupTimerRef = useRef(null);
   const callStateRef = useRef(callState);
@@ -143,6 +148,8 @@ const ChatWindow = ({
   onCallActiveChangeRef.current = onCallActiveChange;
   const onIncomingCallRef = useRef(onIncomingCall);
   onIncomingCallRef.current = onIncomingCall;
+  const onCallPhaseChangeRef = useRef(onCallPhaseChange);
+  onCallPhaseChangeRef.current = onCallPhaseChange;
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
@@ -238,9 +245,22 @@ const ChatWindow = ({
     localCallStreamRef.current = localCallStream;
   }, [localCallStream]);
 
+  useEffect(() => {
+    isCameraOffRef.current = isCameraOff;
+  }, [isCameraOff]);
+
+  useEffect(() => {
+    cameraFacingRef.current = cameraFacing;
+  }, [cameraFacing]);
+
   const cleanupCall = useCallback(() => {
     clearTimeout(disconnectCleanupTimerRef.current);
     disconnectCleanupTimerRef.current = null;
+    if (visibilityReacquireTimerRef.current) {
+      clearTimeout(visibilityReacquireTimerRef.current);
+      visibilityReacquireTimerRef.current = null;
+    }
+    reacquireCameraInFlightRef.current = false;
     try {
       pcRef.current?.close();
     } catch {
@@ -257,7 +277,9 @@ const ChatWindow = ({
     setIncomingCall(null);
     setIsMicMuted(false);
     setIsCameraOff(false);
+    isCameraOffRef.current = false;
     setCameraFacing("user");
+    cameraFacingRef.current = "user";
     setCallStartedAt(null);
     setCallElapsedMs(0);
     setIsLocalMain(false);
@@ -314,6 +336,7 @@ const ChatWindow = ({
     const stream = localCallStreamRef.current;
     if (!stream) return;
     const next = !isCameraOff;
+    isCameraOffRef.current = next;
     setIsCameraOff(next);
     const tracks = stream.getVideoTracks();
     if (!next) {
@@ -323,25 +346,38 @@ const ChatWindow = ({
       } else {
         try {
           const pc = pcRef.current;
-          const newTrack = await acquireVideoTrack(cameraFacing);
+          const newTrack = await acquireVideoTrack(cameraFacingRef.current);
           if (!newTrack) return;
-          for (const t of tracks) {
-            stream.removeTrack(t);
+          if (!localCallStreamRef.current || !pcRef.current) {
+            newTrack.stop();
+            return;
+          }
+          const oldTracks = [...stream.getVideoTracks()];
+          const sender = pc
+            ?.getSenders()
+            .find((s) => s.track && s.track.kind === "video");
+          if (sender) await sender.replaceTrack(newTrack);
+          for (const t of oldTracks) {
+            if (t === newTrack) continue;
+            try {
+              stream.removeTrack(t);
+            } catch {
+              /* ignore */
+            }
             try {
               t.stop();
             } catch {
               /* ignore */
             }
           }
-          const sender = pc
-            ?.getSenders()
-            .find((s) => s.track && s.track.kind === "video");
-          if (sender) await sender.replaceTrack(newTrack);
-          stream.addTrack(newTrack);
+          if (!stream.getVideoTracks().includes(newTrack)) {
+            stream.addTrack(newTrack);
+          }
           newTrack.enabled = true;
           setLocalCallStream(stream);
           setCallError("");
         } catch (err) {
+          isCameraOffRef.current = true;
           setIsCameraOff(true);
           setCallError(err?.message || "Could not start video source.");
         }
@@ -351,7 +387,7 @@ const ChatWindow = ({
         t.enabled = false;
       });
     }
-  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
+  }, [acquireVideoTrack, isCameraOff]);
 
   const postCallSummaryMessage = useCallback(
     async ({ receiverId, isVideo, startedAt, status }) => {
@@ -390,80 +426,131 @@ const ChatWindow = ({
     const pc = pcRef.current;
     const stream = localCallStreamRef.current;
     if (!pc || !stream) return;
-    const nextFacing = cameraFacing === "user" ? "environment" : "user";
-
-    const oldVideoTracks = stream.getVideoTracks();
-    oldVideoTracks.forEach((t) => {
-      stream.removeTrack(t);
-      try {
-        t.stop();
-      } catch {
-        /* ignore */
-      }
-    });
-    setLocalCallStream(stream);
+    const prevFacing = cameraFacingRef.current;
+    const nextFacing = prevFacing === "user" ? "environment" : "user";
 
     try {
       const newVideoTrack = await acquireVideoTrack(nextFacing);
       if (!newVideoTrack) throw new Error("No camera available.");
+      if (!localCallStreamRef.current || !pcRef.current) {
+        newVideoTrack.stop();
+        return;
+      }
+      const oldVideoTracks = [...stream.getVideoTracks()];
       const sender = pc
         .getSenders()
         .find((s) => s.track && s.track.kind === "video");
       if (sender) await sender.replaceTrack(newVideoTrack);
-      stream.addTrack(newVideoTrack);
-      newVideoTrack.enabled = !isCameraOff;
-      setLocalCallStream(stream);
-      setCameraFacing(nextFacing);
-      setCallError("");
-    } catch (err) {
-      try {
-        const fallback = await acquireVideoTrack(cameraFacing);
-        if (fallback) {
-          const sender = pc
-            .getSenders()
-            .find((s) => s.track && s.track.kind === "video");
-          if (sender) await sender.replaceTrack(fallback);
-          stream.addTrack(fallback);
-          fallback.enabled = !isCameraOff;
-          setLocalCallStream(stream);
-          setCallError("Could not switch camera. Reverted.");
-          return;
+      for (const t of oldVideoTracks) {
+        if (t === newVideoTrack) continue;
+        try {
+          stream.removeTrack(t);
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
-      }
-      setCallError(err?.message || "Could not start video source.");
-    }
-  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
-
-  const reacquireCamera = useCallback(async () => {
-    const pc = pcRef.current;
-    const stream = localCallStreamRef.current;
-    if (!pc || !stream) return;
-    if (!callStateRef.current?.isVideo) return;
-    try {
-      const newTrack = await acquireVideoTrack(cameraFacing);
-      if (!newTrack) return;
-      for (const t of stream.getVideoTracks()) {
-        stream.removeTrack(t);
         try {
           t.stop();
         } catch {
           /* ignore */
         }
       }
+      if (!stream.getVideoTracks().includes(newVideoTrack)) {
+        stream.addTrack(newVideoTrack);
+      }
+      newVideoTrack.enabled = !isCameraOffRef.current;
+      setLocalCallStream(stream);
+      setCameraFacing(nextFacing);
+      cameraFacingRef.current = nextFacing;
+      setCallError("");
+    } catch (err) {
+      try {
+        const fallback = await acquireVideoTrack(prevFacing);
+        if (fallback && localCallStreamRef.current && pcRef.current) {
+          const oldAfterFail = [...stream.getVideoTracks()];
+          const sender = pc
+            .getSenders()
+            .find((s) => s.track && s.track.kind === "video");
+          if (sender) await sender.replaceTrack(fallback);
+          for (const t of oldAfterFail) {
+            if (t === fallback) continue;
+            try {
+              stream.removeTrack(t);
+            } catch {
+              /* ignore */
+            }
+            try {
+              t.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+          if (!stream.getVideoTracks().includes(fallback)) {
+            stream.addTrack(fallback);
+          }
+          fallback.enabled = !isCameraOffRef.current;
+          setLocalCallStream(stream);
+          setCallError("Could not switch camera. Reverted.");
+          return;
+        }
+        fallback?.stop();
+      } catch {
+        /* ignore */
+      }
+      setCallError(err?.message || "Could not start video source.");
+    }
+  }, [acquireVideoTrack]);
+
+  const reacquireCamera = useCallback(async () => {
+    const pc = pcRef.current;
+    const stream = localCallStreamRef.current;
+    if (!pc || !stream) return;
+    if (!callStateRef.current?.isVideo) return;
+    if (isCameraOffRef.current) return;
+    if (reacquireCameraInFlightRef.current) return;
+    reacquireCameraInFlightRef.current = true;
+    try {
+      const newTrack = await acquireVideoTrack(cameraFacingRef.current);
+      if (!newTrack) return;
+      if (!localCallStreamRef.current || !pcRef.current) {
+        newTrack.stop();
+        return;
+      }
+      if (isCameraOffRef.current) {
+        newTrack.stop();
+        return;
+      }
+      const oldTracks = [...stream.getVideoTracks()];
       const sender = pc
         .getSenders()
         .find((s) => s.track && s.track.kind === "video");
-      if (sender) await sender.replaceTrack(newTrack);
-      stream.addTrack(newTrack);
-      newTrack.enabled = !isCameraOff;
+      if (sender) {
+        await sender.replaceTrack(newTrack);
+      }
+      for (const t of oldTracks) {
+        if (t === newTrack) continue;
+        try {
+          stream.removeTrack(t);
+        } catch {
+          /* ignore */
+        }
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!stream.getVideoTracks().includes(newTrack)) {
+        stream.addTrack(newTrack);
+      }
+      newTrack.enabled = !isCameraOffRef.current;
       setLocalCallStream(stream);
       setCallError("");
     } catch (err) {
       setCallError(err?.message || "Could not restart camera.");
+    } finally {
+      reacquireCameraInFlightRef.current = false;
     }
-  }, [acquireVideoTrack, cameraFacing, isCameraOff]);
+  }, [acquireVideoTrack]);
 
   const swapCallViews = useCallback(() => {
     setIsLocalMain((prev) => !prev);
@@ -482,18 +569,29 @@ const ChatWindow = ({
     const handleEnded = () => {
       void reacquireCamera();
     };
-    const handleVisibility = () => {
+    const scheduleVisibilityCheck = () => {
       if (document.visibilityState !== "visible") return;
-      const t = localCallStreamRef.current?.getVideoTracks()[0];
-      if (!t || t.readyState === "ended" || !t.enabled) {
-        void reacquireCamera();
+      if (visibilityReacquireTimerRef.current) {
+        clearTimeout(visibilityReacquireTimerRef.current);
       }
+      visibilityReacquireTimerRef.current = setTimeout(() => {
+        visibilityReacquireTimerRef.current = null;
+        if (!callStateRef.current?.isVideo || isCameraOffRef.current) return;
+        const t = localCallStreamRef.current?.getVideoTracks()[0];
+        if (!t || t.readyState !== "live") {
+          void reacquireCamera();
+        }
+      }, 500);
     };
     videoTrack.addEventListener("ended", handleEnded);
-    document.addEventListener("visibilitychange", handleVisibility);
+    document.addEventListener("visibilitychange", scheduleVisibilityCheck);
     return () => {
       videoTrack.removeEventListener("ended", handleEnded);
-      document.removeEventListener("visibilitychange", handleVisibility);
+      document.removeEventListener("visibilitychange", scheduleVisibilityCheck);
+      if (visibilityReacquireTimerRef.current) {
+        clearTimeout(visibilityReacquireTimerRef.current);
+        visibilityReacquireTimerRef.current = null;
+      }
     };
   }, [localCallStream, callState.isVideo, isCameraOff, reacquireCamera]);
 
@@ -1245,6 +1343,10 @@ const ChatWindow = ({
   useEffect(() => {
     onCallActiveChangeRef.current?.(callOverlayActive);
   }, [callOverlayActive]);
+
+  useEffect(() => {
+    onCallPhaseChangeRef.current?.(callState.phase);
+  }, [callState.phase]);
 
   if (!selectedUser && !callOverlayActive) {
     if (hidePlaceholder) return null;

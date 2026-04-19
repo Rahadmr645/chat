@@ -52,22 +52,43 @@ const NotificationCenter = () => {
       </button>
 
       {open && (
-        <div className="notifCenter__panel" role="dialog" aria-label="Notifications">
-          <div className="notifCenter__head">
-            <h2 className="notifCenter__title">Notifications</h2>
-            <div className="notifCenter__headActions">
-              {items.length > 0 && (
-                <>
-                  <button type="button" className="notifCenter__linkBtn" onClick={markAllRead}>
-                    Read all
-                  </button>
-                  <button type="button" className="notifCenter__linkBtn" onClick={clearAll}>
-                    Clear
-                  </button>
-                </>
-              )}
+        <>
+          <button
+            type="button"
+            className="notifCenter__backdrop"
+            aria-label="Close notifications"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+          />
+          <div className="notifCenter__panel" role="dialog" aria-label="Notifications">
+            <div className="notifCenter__head">
+              <h2 className="notifCenter__title">Notifications</h2>
+              <div className="notifCenter__headActions">
+                {items.length > 0 && (
+                  <>
+                    <button type="button" className="notifCenter__linkBtn" onClick={markAllRead}>
+                      Read all
+                    </button>
+                    <button type="button" className="notifCenter__linkBtn" onClick={clearAll}>
+                      Clear
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="notifCenter__closeBtn"
+                  aria-label="Close notifications"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
-          </div>
 
           {typeof Notification !== "undefined" && Notification.permission === "default" && (
             <button type="button" className="notifCenter__banner" onClick={requestDesktopPermission}>
@@ -120,7 +141,8 @@ const NotificationCenter = () => {
               </div>
             ))}
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

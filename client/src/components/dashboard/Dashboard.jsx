@@ -9,6 +9,12 @@ import ChatWindow from "../chat/ChatWindow";
 import ChatSettingsPanel from "../settings/ChatSettingsPanel.jsx";
 import { apiRequest } from "../../services/api.js";
 import { useMediaQuery } from "../../hooks/useMediaQuery.js";
+import {
+  startCallRingtone,
+  stopCallRingtone,
+  startVibration,
+  stopVibration,
+} from "../../utils/callRingtone.js";
 
 const matchQuery = (userLike, q) => {
   if (!q) return true;
@@ -61,6 +67,33 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [callActive, setCallActive] = useState(false);
+  const callNotificationRef = useRef(null);
+  const ringingActiveRef = useRef(false);
+
+  const closeCallNotification = useCallback(() => {
+    if (callNotificationRef.current) {
+      try {
+        callNotificationRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      callNotificationRef.current = null;
+    }
+  }, []);
+
+  const stopRinging = useCallback(() => {
+    if (!ringingActiveRef.current) return;
+    ringingActiveRef.current = false;
+    stopCallRingtone();
+    stopVibration();
+    closeCallNotification();
+  }, [closeCallNotification]);
+
+  useEffect(() => {
+    return () => {
+      stopRinging();
+    };
+  }, [stopRinging]);
 
   useEffect(() => {
     if (!userIdKey) return;
@@ -80,22 +113,6 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   } = useNotifications();
 
   const friendRequestBaselineRef = useRef(null);
-  const onlineSessionRef = useRef(new Set());
-
-  const applyStickyOnline = useCallback((rows) => {
-    const session = onlineSessionRef.current;
-    return rows.map((row) => {
-      const id = String(row?._id ?? "");
-      if (row?.isOnline) {
-        if (id) session.add(id);
-        return row;
-      }
-      if (id && session.has(id)) {
-        return { ...row, isOnline: true };
-      }
-      return row;
-    });
-  }, []);
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -119,11 +136,11 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
       apiRequest({ path: "/api/auth/friends/requests/incoming", token }),
       apiRequest({ path: "/api/auth/users/blocked", token }),
     ]);
-    setUsers(applyStickyOnline(usersData.users || []));
-    setFriends(applyStickyOnline(friendsData.friends || []));
+    setUsers(usersData.users || []);
+    setFriends(friendsData.friends || []);
     setIncomingRequests(incomingData.requests || []);
     setBlockedUsers(blockedData.blocked || []);
-  }, [token, applyStickyOnline]);
+  }, [token]);
 
   useEffect(() => {
     const load = async () => {
@@ -328,16 +345,11 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
         ? String(payload.lastSeenAt)
         : undefined;
 
-    if (online) {
-      onlineSessionRef.current.add(uid);
-    }
-
     const patchUser = (row) => {
       if (String(row._id) !== uid) return row;
-      const stickyOnline = online || onlineSessionRef.current.has(uid);
       return {
         ...row,
-        isOnline: stickyOnline ? true : Boolean(row.isOnline),
+        isOnline: online,
         ...(lastSeenAt !== undefined ? { lastSeenAt } : {}),
       };
     };
@@ -443,24 +455,56 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                   if (active) {
                     setMainTab("chats");
                     if (isMobile) setSidebarOpen(false);
+                  } else {
+                    stopRinging();
+                  }
+                }}
+                onCallPhaseChange={(phase) => {
+                  if (phase !== "incoming") {
+                    stopRinging();
                   }
                 }}
                 onIncomingCall={(info) => {
                   setMainTab("chats");
                   if (isMobile) setSidebarOpen(false);
+
+                  ringingActiveRef.current = true;
+                  startCallRingtone();
+                  startVibration();
+
                   if (
                     typeof Notification !== "undefined" &&
-                    document.hidden &&
                     Notification.permission === "granted"
                   ) {
                     try {
-                      new Notification(
-                        info.isVideo ? "Incoming video call" : "Incoming voice call",
+                      closeCallNotification();
+                      const notif = new Notification(
+                        info.isVideo
+                          ? "Incoming video call"
+                          : "Incoming voice call",
                         {
                           body: info.peerLabel || "Tap to answer",
                           icon: "/favicon.svg",
+                          tag: "rchat-incoming-call",
+                          requireInteraction: true,
+                          renotify: true,
+                          silent: false,
+                          vibrate: [600, 400, 600, 400, 600],
                         }
                       );
+                      notif.onclick = () => {
+                        try {
+                          window.focus();
+                        } catch {
+                          /* ignore */
+                        }
+                        try {
+                          notif.close();
+                        } catch {
+                          /* ignore */
+                        }
+                      };
+                      callNotificationRef.current = notif;
                     } catch {
                       /* ignore */
                     }
