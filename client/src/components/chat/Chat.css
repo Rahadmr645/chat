@@ -1295,6 +1295,52 @@
   height: 12px;
 }
 
+.callPeerCamBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  vertical-align: middle;
+  pointer-events: auto;
+}
+
+.callPeerCamBadge svg {
+  width: 12px;
+  height: 12px;
+}
+
+.callLocalPipPeerCamOff {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.callLocalPipPeerCamOff svg {
+  width: 26px;
+  height: 26px;
+  opacity: 0.95;
+}
+
+.callLocalPipPeerCamOffLabel {
+  max-width: 100%;
+}
+
 /* ===== In-call chat panel ===== */
 .callChatPanel {
   position: absolute;

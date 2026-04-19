@@ -108,14 +108,16 @@ export const emitCallEnd = ({ senderId, receiverId }) => {
   }
 };
 
-export const emitCallMuteStatus = ({ senderId, receiverId, muted }) => {
-  if (socket) {
-    socket.emit("callMuteStatus", {
-      senderId: String(senderId),
-      receiverId: String(receiverId),
-      muted: Boolean(muted),
-    });
-  }
+export const emitCallMuteStatus = ({ senderId, receiverId, muted, cameraOff }) => {
+  if (!socket) return;
+  const payload = {
+    senderId: String(senderId),
+    receiverId: String(receiverId),
+  };
+  if (muted !== undefined) payload.muted = Boolean(muted);
+  if (cameraOff !== undefined) payload.cameraOff = Boolean(cameraOff);
+  if (Object.keys(payload).length <= 2) return;
+  socket.emit("callMuteStatus", payload);
 };
 
 export const subscribeIncomingMessages = (callback) => {

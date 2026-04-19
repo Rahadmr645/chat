@@ -166,13 +166,16 @@ export function attachSocket(httpServer) {
     });
 
     socket.on("callMuteStatus", (data) => {
-      const { senderId, receiverId, muted } = data || {};
+      const { senderId, receiverId, muted, cameraOff } = data || {};
       if (!senderId || !receiverId) return;
-      emitToUserSockets(io, receiverId, "callMuteStatus", {
+      const payload = {
         senderId: String(senderId),
         receiverId: String(receiverId),
-        muted: Boolean(muted),
-      });
+      };
+      if (muted !== undefined) payload.muted = Boolean(muted);
+      if (cameraOff !== undefined) payload.cameraOff = Boolean(cameraOff);
+      if (Object.keys(payload).length <= 2) return;
+      emitToUserSockets(io, receiverId, "callMuteStatus", payload);
     });
 
     socket.on("disconnect", () => {

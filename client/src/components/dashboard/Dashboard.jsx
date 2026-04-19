@@ -70,6 +70,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const [callActive, setCallActive] = useState(false);
   const [pendingOutgoingCall, setPendingOutgoingCall] = useState(null);
   const [callLogItems, setCallLogItems] = useState([]);
+  const [callRecoveryPrompt, setCallRecoveryPrompt] = useState(null);
   const callNotificationRef = useRef(null);
   const ringingActiveRef = useRef(false);
 
@@ -166,6 +167,28 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
     };
     load();
   }, [refreshLists]);
+
+  useEffect(() => {
+    if (!userIdKey || loadingUsers || friends.length === 0) return;
+    try {
+      const key = `rchat_call_recovery_${userIdKey}`;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return;
+      sessionStorage.removeItem(key);
+      const data = JSON.parse(raw);
+      if (!data?.peerId || typeof data.at !== "number") return;
+      if (Date.now() - data.at > 3 * 60 * 1000) return;
+      const f = friends.find((u) => String(u._id) === String(data.peerId));
+      if (!f) return;
+      setCallRecoveryPrompt({
+        peerId: String(data.peerId),
+        isVideo: Boolean(data.isVideo),
+        label: f.name || f.email || "Contact",
+      });
+    } catch {
+      /* ignore */
+    }
+  }, [userIdKey, loadingUsers, friends]);
 
   useEffect(() => {
     if (loadingUsers) return;
@@ -556,6 +579,49 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
         </div>
       </div>
       <BottomNav active={mainTab} onSelect={setMainTab} />
+
+      {callRecoveryPrompt && (
+        <div
+          className="callRecoveryOverlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="callRecoveryTitle"
+        >
+          <div className="callRecoveryCard">
+            <h3 id="callRecoveryTitle" className="callRecoveryTitle">
+              Call interrupted
+            </h3>
+            <p className="callRecoveryText">
+              Reloading or closing the tab ended your{" "}
+              {callRecoveryPrompt.isVideo ? "video" : "voice"} call with{" "}
+              <strong>{callRecoveryPrompt.label}</strong>. Browsers cannot keep an active call after a
+              full reload — you can start a new call with one tap.
+            </p>
+            <div className="callRecoveryActions">
+              <button
+                type="button"
+                className="callRecoveryPrimary"
+                onClick={() => {
+                  const { peerId, isVideo } = callRecoveryPrompt;
+                  setCallRecoveryPrompt(null);
+                  setPendingOutgoingCall({ peerId, isVideo });
+                  selectUser(peerId);
+                  setMainTab("chats");
+                }}
+              >
+                Call again
+              </button>
+              <button
+                type="button"
+                className="callRecoverySecondary"
+                onClick={() => setCallRecoveryPrompt(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ChatSettingsPanel
         open={settingsOpen}

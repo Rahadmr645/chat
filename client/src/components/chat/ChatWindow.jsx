@@ -215,6 +215,7 @@ const ChatWindow = ({
   const [pipPos, setPipPos] = useState({ x: 18, y: 18 });
   const [isPipDragging, setIsPipDragging] = useState(false);
   const [peerMuted, setPeerMuted] = useState(false);
+  const [peerCameraOff, setPeerCameraOff] = useState(false);
   const [callChatOpen, setCallChatOpen] = useState(false);
   /** Voice-call listen mode: earpiece (normal) vs loudspeaker — uses setSinkId when supported. */
   const [callVoiceOutputMode, setCallVoiceOutputMode] = useState("earpiece");
@@ -234,7 +235,9 @@ const ChatWindow = ({
   const rtcConfigRef = useRef(DEFAULT_RTC_CONFIG);
   const localCallStreamRef = useRef(null);
   const isCameraOffRef = useRef(false);
+  const isMicMutedRef = useRef(false);
   const cameraFacingRef = useRef("user");
+  const inCallMediaStatusEmittedRef = useRef(false);
   const reacquireCameraInFlightRef = useRef(false);
   const visibilityReacquireTimerRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
@@ -275,6 +278,66 @@ const ChatWindow = ({
   useEffect(() => {
     incomingCallRef.current = incomingCall;
   }, [incomingCall]);
+
+  /** Warn before tab close/reload during a call; on real unload notify peer and save quick-rejoin hint. */
+  useEffect(() => {
+    const callSessionActive = () => {
+      if (incomingCallRef.current) return true;
+      const phase = callStateRef.current?.phase;
+      return Boolean(phase && phase !== "idle");
+    };
+
+    const recoveryStorageKey = () => {
+      const uid = currentUserIdRef.current;
+      return uid ? `rchat_call_recovery_${String(uid)}` : null;
+    };
+
+    const onBeforeUnload = (e) => {
+      if (!callSessionActive()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    const onPageHide = (e) => {
+      if (e.persisted) return;
+      if (!callSessionActive()) return;
+      const me = currentUserIdRef.current;
+      const peerId =
+        incomingCallRef.current?.senderId || callStateRef.current?.peerId;
+      const isVideo = Boolean(
+        incomingCallRef.current?.isVideo ?? callStateRef.current?.isVideo
+      );
+      if (me && peerId) {
+        try {
+          emitCallEnd({ senderId: String(me), receiverId: String(peerId) });
+        } catch {
+          /* ignore */
+        }
+        try {
+          const key = recoveryStorageKey();
+          if (key) {
+            sessionStorage.setItem(
+              key,
+              JSON.stringify({
+                peerId: String(peerId),
+                isVideo,
+                at: Date.now(),
+              })
+            );
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []);
 
   useEffect(() => {
     callStartedAtRef.current = callStartedAt;
@@ -372,6 +435,10 @@ const ChatWindow = ({
   }, [isCameraOff]);
 
   useEffect(() => {
+    isMicMutedRef.current = isMicMuted;
+  }, [isMicMuted]);
+
+  useEffect(() => {
     cameraFacingRef.current = cameraFacing;
   }, [cameraFacing]);
 
@@ -406,6 +473,8 @@ const ChatWindow = ({
     setIsLocalMain(false);
     setPipPos({ x: 18, y: 18 });
     setPeerMuted(false);
+    setPeerCameraOff(false);
+    inCallMediaStatusEmittedRef.current = false;
     setCallChatOpen(false);
     setCallVoiceOutputMode("earpiece");
     setCallState({
@@ -415,43 +484,67 @@ const ChatWindow = ({
       isVideo: false,
       direction: "",
     });
+    try {
+      const uid = currentUserIdRef.current;
+      if (uid) sessionStorage.removeItem(`rchat_call_recovery_${String(uid)}`);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const emitCallMediaStatusToPeer = useCallback(() => {
+    const me = currentUserIdRef.current;
+    const peerId = callStateRef.current?.peerId;
+    if (!me || !peerId) return;
+    const isVideo = Boolean(callStateRef.current?.isVideo);
+    const payload = {
+      senderId: String(me),
+      receiverId: String(peerId),
+      muted: Boolean(isMicMutedRef.current),
+    };
+    if (isVideo) {
+      payload.cameraOff = Boolean(isCameraOffRef.current);
+    }
+    emitCallMuteStatus(payload);
   }, []);
 
   const toggleMicMute = useCallback(() => {
     const stream = localCallStreamRef.current;
     if (!stream) return;
     const next = !isMicMuted;
+    isMicMutedRef.current = next;
     stream.getAudioTracks().forEach((t) => {
       t.enabled = !next;
     });
     setIsMicMuted(next);
-    const me = currentUserIdRef.current;
-    const peerId = callStateRef.current?.peerId;
-    if (me && peerId) {
-      emitCallMuteStatus({
-        senderId: String(me),
-        receiverId: String(peerId),
-        muted: next,
-      });
-    }
-  }, [isMicMuted]);
+    emitCallMediaStatusToPeer();
+  }, [isMicMuted, emitCallMediaStatusToPeer]);
 
   const acquireVideoTrack = useCallback(async (facing) => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
+    const attempts = [
+      { audio: false, video: { facingMode: { exact: facing } } },
+      { audio: false, video: { facingMode: facing } },
+      { audio: false, video: { facingMode: { ideal: facing } } },
+      {
         audio: false,
-        video: { facingMode: { ideal: facing } },
-      });
-      const t = s.getVideoTracks()[0];
-      if (t) return t;
-    } catch {
-      /* fall through */
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      },
+      { audio: false, video: true },
+    ];
+    for (const constraints of attempts) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia(constraints);
+        const t = s.getVideoTracks()[0];
+        if (t) return t;
+      } catch {
+        /* try next */
+      }
     }
-    const generic = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: true,
-    });
-    return generic.getVideoTracks()[0];
+    return null;
   }, []);
 
   const toggleCameraOff = useCallback(async () => {
@@ -461,55 +554,59 @@ const ChatWindow = ({
     isCameraOffRef.current = next;
     setIsCameraOff(next);
     const tracks = stream.getVideoTracks();
-    if (!next) {
-      const liveTrack = tracks.find((t) => t.readyState === "live");
-      if (liveTrack) {
-        liveTrack.enabled = true;
-      } else {
-        try {
-          const pc = pcRef.current;
-          const newTrack = await acquireVideoTrack(cameraFacingRef.current);
-          if (!newTrack) return;
-          if (!localCallStreamRef.current || !pcRef.current) {
-            newTrack.stop();
-            return;
-          }
-          const oldTracks = [...stream.getVideoTracks()];
-          const sender = pc
-            ?.getSenders()
-            .find((s) => s.track && s.track.kind === "video");
-          if (sender) await sender.replaceTrack(newTrack);
-          for (const t of oldTracks) {
-            if (t === newTrack) continue;
-            try {
-              stream.removeTrack(t);
-            } catch {
-              /* ignore */
+    try {
+      if (!next) {
+        const liveTrack = tracks.find((t) => t.readyState === "live");
+        if (liveTrack) {
+          liveTrack.enabled = true;
+        } else {
+          try {
+            const pc = pcRef.current;
+            const newTrack = await acquireVideoTrack(cameraFacingRef.current);
+            if (!newTrack) return;
+            if (!localCallStreamRef.current || !pcRef.current) {
+              newTrack.stop();
+              return;
             }
-            try {
-              t.stop();
-            } catch {
-              /* ignore */
+            const oldTracks = [...stream.getVideoTracks()];
+            const sender = pc
+              ?.getSenders()
+              .find((s) => s.track && s.track.kind === "video");
+            if (sender) await sender.replaceTrack(newTrack);
+            for (const t of oldTracks) {
+              if (t === newTrack) continue;
+              try {
+                stream.removeTrack(t);
+              } catch {
+                /* ignore */
+              }
+              try {
+                t.stop();
+              } catch {
+                /* ignore */
+              }
             }
+            if (!stream.getVideoTracks().includes(newTrack)) {
+              stream.addTrack(newTrack);
+            }
+            newTrack.enabled = true;
+            setLocalCallStream(stream);
+            setCallError("");
+          } catch (err) {
+            isCameraOffRef.current = true;
+            setIsCameraOff(true);
+            setCallError(err?.message || "Could not start video source.");
           }
-          if (!stream.getVideoTracks().includes(newTrack)) {
-            stream.addTrack(newTrack);
-          }
-          newTrack.enabled = true;
-          setLocalCallStream(stream);
-          setCallError("");
-        } catch (err) {
-          isCameraOffRef.current = true;
-          setIsCameraOff(true);
-          setCallError(err?.message || "Could not start video source.");
         }
+      } else {
+        tracks.forEach((t) => {
+          t.enabled = false;
+        });
       }
-    } else {
-      tracks.forEach((t) => {
-        t.enabled = false;
-      });
+    } finally {
+      emitCallMediaStatusToPeer();
     }
-  }, [acquireVideoTrack, isCameraOff]);
+  }, [acquireVideoTrack, isCameraOff, emitCallMediaStatusToPeer]);
 
   const postCallSummaryMessage = useCallback(
     async ({ receiverId, isVideo, startedAt, status, direction = "outgoing" }) => {
@@ -708,6 +805,16 @@ const ChatWindow = ({
       setCallStartedAt(Date.now());
     }
   }, [callState.phase, callStartedAt]);
+
+  useEffect(() => {
+    if (callState.phase !== "in-call" || !callState.isVideo) {
+      inCallMediaStatusEmittedRef.current = false;
+      return;
+    }
+    if (inCallMediaStatusEmittedRef.current) return;
+    inCallMediaStatusEmittedRef.current = true;
+    emitCallMediaStatusToPeer();
+  }, [callState.phase, callState.isVideo, emitCallMediaStatusToPeer]);
 
   useEffect(() => {
     if (!localCallStream || !callState.isVideo || isCameraOff) return undefined;
@@ -1195,7 +1302,12 @@ const ChatWindow = ({
       if (!payload?.senderId || String(payload.receiverId) !== me) return;
       const peerId = callStateRef.current?.peerId;
       if (peerId && String(peerId) !== String(payload.senderId)) return;
-      setPeerMuted(Boolean(payload.muted));
+      if (payload.muted !== undefined) {
+        setPeerMuted(Boolean(payload.muted));
+      }
+      if (payload.cameraOff !== undefined) {
+        setPeerCameraOff(Boolean(payload.cameraOff));
+      }
     });
 
     return () => {
@@ -2196,6 +2308,15 @@ const ChatWindow = ({
                       <p className="callRemoteStatus">Camera off</p>
                     </div>
                   )}
+                  {!mainIsLocal && peerCameraOff && (
+                    <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
+                      <div className="callRemoteAvatar" aria-hidden="true">
+                        <IconVideoOff />
+                      </div>
+                      <p className="callRemoteName">{peerName}</p>
+                      <p className="callRemoteStatus">Camera is off</p>
+                    </div>
+                  )}
 
                   <div className="callTopBar">
                     <p className="callTopName">{peerName}</p>
@@ -2205,6 +2326,12 @@ const ChatWindow = ({
                         <span className="callPeerMutedBadge" title="Muted">
                           <IconMicOff />
                           <span>muted</span>
+                        </span>
+                      )}
+                      {peerCameraOff && (
+                        <span className="callPeerCamBadge" title="Camera off">
+                          <IconVideoOff />
+                          <span>camera off</span>
                         </span>
                       )}
                     </p>
@@ -2260,6 +2387,12 @@ const ChatWindow = ({
                     ) : (
                       <div className="callLocalPipFallback" aria-hidden="true">
                         {(peerName || "?").charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    {mainIsLocal && peerCameraOff && (
+                      <div className="callLocalPipPeerCamOff" aria-hidden="true">
+                        <IconVideoOff />
+                        <span className="callLocalPipPeerCamOffLabel">Camera off</span>
                       </div>
                     )}
                     {!mainIsLocal && isCameraOff && (
