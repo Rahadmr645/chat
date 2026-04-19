@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import {
+  deleteMessage,
   getConversation,
   getVoiceAudio,
   markAsSeen,
@@ -31,5 +32,6 @@ router.post("/send", sendMessage);
 router.get("/conversation/:otherUserId", getConversation);
 router.put("/conversation/:otherUserId/seen", markConversationSeen);
 router.put("/seen/:messageId", markAsSeen);
+router.delete("/:messageId", deleteMessage);
 
 export default router;

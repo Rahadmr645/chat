@@ -7,26 +7,49 @@ import { isBlockedEitherWay } from "../utils/blocking.js";
 import { emitToUser } from "../socket/socketServer.js";
 import { uploadBufferToCloudinary } from "../utils/cloudinary.js";
 
-/** Normalized payload for socket clients (string ids, plain JSON). */
-const messagePayloadForSocket = (doc) => ({
-  _id: String(doc._id),
-  senderId: String(doc.senderId),
-  receiverId: String(doc.receiverId),
-  kind: doc.kind || "text",
-  text: doc.text ?? "",
-  seen: Boolean(doc.seen),
-  durationSec: doc.durationSec ?? 0,
-  voiceMime: doc.voiceMime ?? "",
-  mediaUrl: doc.mediaUrl ?? "",
-  mediaMime: doc.mediaMime ?? "",
-  mediaWidth: doc.mediaWidth ?? 0,
-  mediaHeight: doc.mediaHeight ?? 0,
-  mediaDurationSec: doc.mediaDurationSec ?? 0,
-  mediaName: doc.mediaName ?? "",
-  mediaSizeBytes: doc.mediaSizeBytes ?? 0,
-  createdAt: doc.createdAt,
-  updatedAt: doc.updatedAt,
-});
+const plainMessage = (doc) => (doc?.toObject ? doc.toObject() : doc);
+
+/** Normalized payload for API + socket (string ids, plain JSON). */
+export const messagePayloadForSocket = (doc) => {
+  const o = plainMessage(doc);
+  const base = {
+    _id: String(o._id),
+    senderId: String(o.senderId),
+    receiverId: String(o.receiverId),
+    kind: o.kind || "text",
+    text: o.text ?? "",
+    seen: Boolean(o.seen),
+    durationSec: o.durationSec ?? 0,
+    voiceMime: o.voiceMime ?? "",
+    mediaUrl: o.mediaUrl ?? "",
+    mediaMime: o.mediaMime ?? "",
+    mediaWidth: o.mediaWidth ?? 0,
+    mediaHeight: o.mediaHeight ?? 0,
+    mediaDurationSec: o.mediaDurationSec ?? 0,
+    mediaName: o.mediaName ?? "",
+    mediaSizeBytes: o.mediaSizeBytes ?? 0,
+    deletedForEveryone: Boolean(o.deletedForEveryone),
+    createdAt: o.createdAt,
+    updatedAt: o.updatedAt,
+  };
+  if (base.deletedForEveryone) {
+    return {
+      ...base,
+      kind: "text",
+      text: "This message was deleted.",
+      durationSec: 0,
+      voiceMime: "",
+      mediaUrl: "",
+      mediaMime: "",
+      mediaWidth: 0,
+      mediaHeight: 0,
+      mediaDurationSec: 0,
+      mediaName: "",
+      mediaSizeBytes: 0,
+    };
+  }
+  return base;
+};
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VOICE_DIR = path.join(__dirname, "../uploads/voice");
@@ -76,7 +99,7 @@ export const sendMessage = async (req, res) => {
 
     emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
 
-    return res.status(201).json(newMessage);
+    return res.status(201).json(messagePayloadForSocket(newMessage));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -136,7 +159,7 @@ export const sendVoiceMessage = async (req, res) => {
 
     emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(msg));
 
-    return res.status(201).json(msg);
+    return res.status(201).json(messagePayloadForSocket(msg));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -195,7 +218,7 @@ export const sendMediaMessage = async (req, res) => {
 
     emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
 
-    return res.status(201).json(newMessage);
+    return res.status(201).json(messagePayloadForSocket(newMessage));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -206,6 +229,9 @@ export const getVoiceAudio = async (req, res) => {
     const message = await Message.findById(req.params.messageId);
     if (!message || message.kind !== "voice") {
       return res.status(404).json({ error: "Not found" });
+    }
+    if (message.deletedForEveryone) {
+      return res.status(410).json({ error: "Message was deleted" });
     }
 
     const me = req.user._id;
@@ -260,13 +286,18 @@ export const getConversation = async (req, res) => {
     }
 
     const messages = await Message.find({
-      $or: [
-        { senderId: currentUserId, receiverId: otherUserId },
-        { senderId: otherUserId, receiverId: currentUserId },
+      $and: [
+        {
+          $or: [
+            { senderId: currentUserId, receiverId: otherUserId },
+            { senderId: otherUserId, receiverId: currentUserId },
+          ],
+        },
+        { $nor: [{ hiddenFromUsers: currentUserId }] },
       ],
     }).sort({ createdAt: 1 });
 
-    return res.json(messages);
+    return res.json(messages.map((doc) => messagePayloadForSocket(doc)));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -309,6 +340,90 @@ export const markConversationSeen = async (req, res) => {
   }
 };
 
+export const deleteMessage = async (req, res) => {
+  try {
+    const me = req.user._id;
+    const my = String(me);
+    const { messageId } = req.params;
+    const scope = String(req.body?.scope || "me").toLowerCase();
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    const s = String(message.senderId);
+    const r = String(message.receiverId);
+    if (s !== my && r !== my) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const otherId = s === my ? message.receiverId : message.senderId;
+    const gate = await assertFriendAndNotBlocked(req, otherId);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ error: gate.error });
+    }
+
+    if (scope === "me") {
+      await Message.updateOne(
+        { _id: message._id },
+        { $addToSet: { hiddenFromUsers: me } }
+      );
+      return res.json({ success: true });
+    }
+
+    if (scope !== "everyone") {
+      return res.status(400).json({ error: "Invalid scope" });
+    }
+
+    if (s !== my) {
+      return res.status(403).json({
+        error: "Only the person who sent this message can delete it for everyone",
+      });
+    }
+
+    if (message.deletedForEveryone) {
+      return res.json({ message: messagePayloadForSocket(message) });
+    }
+
+    const wasVoice = message.kind === "voice";
+    const msgIdStr = String(message._id);
+
+    message.deletedForEveryone = true;
+    message.text = "";
+    message.kind = "text";
+    message.durationSec = 0;
+    message.voiceMime = "";
+    message.mediaUrl = "";
+    message.mediaPublicId = "";
+    message.mediaMime = "";
+    message.mediaWidth = 0;
+    message.mediaHeight = 0;
+    message.mediaDurationSec = 0;
+    message.mediaName = "";
+    message.mediaSizeBytes = 0;
+    await message.save();
+
+    if (wasVoice) {
+      for (const ext of [".webm", ".m4a"]) {
+        const p = path.join(VOICE_DIR, `${msgIdStr}${ext}`);
+        try {
+          await fs.unlink(p);
+        } catch {
+          /* ignore missing file */
+        }
+      }
+    }
+
+    const payload = messagePayloadForSocket(message);
+    emitToUser(r, "messageRevoked", { message: payload });
+
+    return res.json({ message: payload });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 export const markAsSeen = async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -335,7 +450,7 @@ export const markAsSeen = async (req, res) => {
       readBy: String(req.user._id),
     });
 
-    return res.json(message);
+    return res.json(messagePayloadForSocket(message));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./Chat.css";
 import {
   connectSocket,
@@ -21,6 +21,7 @@ import {
   subscribeCallUnavailable,
   subscribeIncomingCall,
   subscribeIncomingMessages,
+  subscribeMessageRevoked,
   subscribeMessagesSeen,
   subscribePresence,
   subscribeTypingStatus,
@@ -64,6 +65,61 @@ const DEFAULT_RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
+/** Call timer isolated so the rest of the call UI does not re-render every second. */
+function CallDurationClock({ startedAt }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    if (!startedAt) return undefined;
+    const tick = () => {
+      setSec(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  return formatRecordingClock(sec);
+}
+
+const CallStreamVideo = memo(function CallStreamVideo({
+  stream,
+  className,
+  muted,
+  onClick,
+}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const next = stream ?? null;
+    if (el.srcObject !== next) {
+      el.srcObject = next;
+    }
+  }, [stream]);
+  return (
+    <video
+      ref={ref}
+      className={className}
+      autoPlay
+      playsInline
+      muted={Boolean(muted)}
+      onClick={onClick}
+    />
+  );
+});
+
+const CallRemoteAudio = memo(function CallRemoteAudio({ stream }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const next = stream ?? null;
+    if (el.srcObject !== next) {
+      el.srcObject = next;
+    }
+  }, [stream]);
+  return <audio ref={ref} autoPlay />;
+});
+
 const ChatWindow = ({
   currentUser,
   selectedUser,
@@ -104,12 +160,12 @@ const ChatWindow = ({
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [cameraFacing, setCameraFacing] = useState("user");
   const [callStartedAt, setCallStartedAt] = useState(null);
-  const [callElapsedMs, setCallElapsedMs] = useState(0);
   const [isLocalMain, setIsLocalMain] = useState(false);
   const [pipPos, setPipPos] = useState({ x: 18, y: 18 });
   const [isPipDragging, setIsPipDragging] = useState(false);
   const [peerMuted, setPeerMuted] = useState(false);
   const [callChatOpen, setCallChatOpen] = useState(false);
+  const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
 
@@ -281,7 +337,6 @@ const ChatWindow = ({
     setCameraFacing("user");
     cameraFacingRef.current = "user";
     setCallStartedAt(null);
-    setCallElapsedMs(0);
     setIsLocalMain(false);
     setPipPos({ x: 18, y: 18 });
     setPeerMuted(false);
@@ -595,15 +650,6 @@ const ChatWindow = ({
     };
   }, [localCallStream, callState.isVideo, isCameraOff, reacquireCamera]);
 
-  useEffect(() => {
-    if (!callStartedAt) return undefined;
-    setCallElapsedMs(Date.now() - callStartedAt);
-    const id = setInterval(() => {
-      setCallElapsedMs(Date.now() - callStartedAt);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [callStartedAt]);
-
   const addPendingIceCandidates = useCallback(async () => {
     const pc = pcRef.current;
     if (!pc || !pendingIceCandidatesRef.current.length) return;
@@ -879,6 +925,21 @@ const ChatWindow = ({
       );
     });
 
+    const unsubRevoked = subscribeMessageRevoked(({ message }) => {
+      if (!message?._id) return;
+      const me = String(currentUserIdRef.current || "");
+      const peer = String(selectedUserIdRef.current || "");
+      if (!peer) return;
+      const from = String(message.senderId);
+      const to = String(message.receiverId);
+      if (!((from === me && to === peer) || (from === peer && to === me))) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m._id) === String(message._id) ? { ...m, ...message } : m
+        )
+      );
+    });
+
     const unsubPresence = subscribePresence((payload) => {
       onPresenceRef.current?.(payload);
     });
@@ -973,6 +1034,7 @@ const ChatWindow = ({
       unsubTyping();
       unsubVoiceRec();
       unsubSeen();
+      unsubRevoked();
       unsubPresence();
       unsubIncomingCall();
       unsubCallAnswered();
@@ -1307,6 +1369,33 @@ const ChatWindow = ({
     }
   };
 
+  const handleDeleteMessage = useCallback(
+    async (messageId, scope) => {
+      if (!token || !messageId) return;
+      setOpenMessageMenuId(null);
+      try {
+        const data = await apiRequest({
+          method: "DELETE",
+          path: `/api/messages/${messageId}`,
+          token,
+          body: { scope },
+        });
+        if (scope === "me") {
+          setMessages((prev) => prev.filter((m) => String(m._id) !== String(messageId)));
+        } else if (data?.message) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              String(m._id) === String(messageId) ? { ...m, ...data.message } : m
+            )
+          );
+        }
+      } catch (err) {
+        setError(err.message || "Could not delete message.");
+      }
+    },
+    [token]
+  );
+
   const onTextChange = (e) => {
     const v = e.target.value;
     setText(v);
@@ -1328,6 +1417,22 @@ const ChatWindow = ({
       })),
     [messages]
   );
+
+  useEffect(() => {
+    if (openMessageMenuId == null) return undefined;
+    const onDoc = (e) => {
+      const row = e.target.closest("[data-msg-row]");
+      if (row && row.getAttribute("data-msg-row") === String(openMessageMenuId)) {
+        return;
+      }
+      setOpenMessageMenuId(null);
+    };
+    const t = setTimeout(() => document.addEventListener("click", onDoc), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", onDoc);
+    };
+  }, [openMessageMenuId]);
 
   const comingSoon = (label) => () => window.alert(`${label} — coming soon.`);
   const formatFileSize = (n) => {
@@ -1444,94 +1549,152 @@ const ChatWindow = ({
         {normalizedMessages.map((msg) => {
           const isSent = msg.senderId === String(currentUser._id);
           const time = formatMessageTime(msg.createdAt);
-          const isVoice = msg.kind === "voice";
-          const isImage = msg.kind === "image";
-          const isVideo = msg.kind === "video";
-          const isAudioFile = msg.kind === "audio";
-          const isFile = msg.kind === "file";
+          const isRevoked = Boolean(msg.deletedForEveryone);
+          const isVoice = !isRevoked && msg.kind === "voice";
+          const isImage = !isRevoked && msg.kind === "image";
+          const isVideo = !isRevoked && msg.kind === "video";
+          const isAudioFile = !isRevoked && msg.kind === "audio";
+          const isFile = !isRevoked && msg.kind === "file";
           const callMatch =
-            !isVoice && !isImage && !isVideo && !isAudioFile && !isFile && msg.text
+            !isRevoked &&
+            !isVoice &&
+            !isImage &&
+            !isVideo &&
+            !isAudioFile &&
+            !isFile &&
+            msg.text
               ? /^(📹|📞)\s+(.+)$/.exec(msg.text.trim())
               : null;
           const isCallSummary = Boolean(callMatch);
           return (
             <div
               key={msg._id}
+              data-msg-row={msg._id}
               className={`messageRow ${isSent ? "sent" : "received"}`}
             >
-              <div
-                className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}${
-                  isCallSummary ? " bubbleCall" : ""
-                }`}
-              >
-                {isVoice ? (
-                  <div className="bubbleVoice">
-                    <VoiceMessagePlayer
-                      messageId={String(msg._id)}
-                      token={token}
-                      durationSec={msg.durationSec ?? 0}
-                    />
+              <div className="messageRowBubbles">
+                <div
+                  className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}${
+                    isCallSummary ? " bubbleCall" : ""
+                  }${isRevoked ? " bubble--revoked" : ""}`}
+                >
+                  {isRevoked ? (
+                    <div className="bubbleText bubbleText--revoked">
+                      This message was deleted.
+                    </div>
+                  ) : isVoice ? (
+                    <div className="bubbleVoice">
+                      <VoiceMessagePlayer
+                        messageId={String(msg._id)}
+                        token={token}
+                        durationSec={msg.durationSec ?? 0}
+                      />
+                    </div>
+                  ) : isImage ? (
+                    <div className="bubbleMediaWrap">
+                      <img src={msg.mediaUrl} alt="Shared" className="bubbleMedia bubbleMedia--image" />
+                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                    </div>
+                  ) : isVideo ? (
+                    <div className="bubbleMediaWrap">
+                      <video
+                        controls
+                        preload="metadata"
+                        className="bubbleMedia bubbleMedia--video"
+                        src={msg.mediaUrl}
+                      />
+                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                    </div>
+                  ) : isAudioFile ? (
+                    <div className="bubbleMediaWrap">
+                      <audio className="bubbleAudioFile" controls preload="metadata" src={msg.mediaUrl} />
+                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                    </div>
+                  ) : isFile ? (
+                    <a
+                      className="bubbleFileCard"
+                      href={msg.mediaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <span className="bubbleFileIcon" aria-hidden="true">
+                        📄
+                      </span>
+                      <span className="bubbleFileMeta">
+                        <strong>{msg.mediaName || "Attachment"}</strong>
+                        <small>{formatFileSize(msg.mediaSizeBytes)}</small>
+                      </span>
+                    </a>
+                  ) : isCallSummary ? (
+                    <div className="bubbleCallRow">
+                      <span
+                        className={`bubbleCallIcon${
+                          callMatch[1] === "📹" ? " bubbleCallIcon--video" : " bubbleCallIcon--voice"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {callMatch[1]}
+                      </span>
+                      <span className="bubbleCallText">{callMatch[2]}</span>
+                    </div>
+                  ) : (
+                    <div className="bubbleText">{msg.text}</div>
+                  )}
+                  <div className="bubbleFooter">
+                    <span className="msgTime">{time}</span>
+                    {isSent && (
+                      <span
+                        className={`ticks ${msg.seen ? "ticksRead" : "ticksSent"}`}
+                        title={msg.seen ? "Read" : "Delivered"}
+                      >
+                        <span className="tick">✓</span>
+                        <span className="tick">✓</span>
+                      </span>
+                    )}
                   </div>
-                ) : isImage ? (
-                  <div className="bubbleMediaWrap">
-                    <img src={msg.mediaUrl} alt="Shared" className="bubbleMedia bubbleMedia--image" />
-                    {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
-                  </div>
-                ) : isVideo ? (
-                  <div className="bubbleMediaWrap">
-                    <video
-                      controls
-                      preload="metadata"
-                      className="bubbleMedia bubbleMedia--video"
-                      src={msg.mediaUrl}
-                    />
-                    {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
-                  </div>
-                ) : isAudioFile ? (
-                  <div className="bubbleMediaWrap">
-                    <audio className="bubbleAudioFile" controls preload="metadata" src={msg.mediaUrl} />
-                    {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
-                  </div>
-                ) : isFile ? (
-                  <a
-                    className="bubbleFileCard"
-                    href={msg.mediaUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                </div>
+                <div className="messageRowMenuColumn">
+                  <button
+                    type="button"
+                    className="messageMenuBtn"
+                    aria-label="Message options"
+                    aria-expanded={openMessageMenuId === msg._id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMessageMenuId((cur) => (cur === msg._id ? null : msg._id));
+                    }}
                   >
-                    <span className="bubbleFileIcon" aria-hidden="true">
-                      📄
-                    </span>
-                    <span className="bubbleFileMeta">
-                      <strong>{msg.mediaName || "Attachment"}</strong>
-                      <small>{formatFileSize(msg.mediaSizeBytes)}</small>
-                    </span>
-                  </a>
-                ) : isCallSummary ? (
-                  <div className="bubbleCallRow">
-                    <span
-                      className={`bubbleCallIcon${
-                        callMatch[1] === "📹" ? " bubbleCallIcon--video" : " bubbleCallIcon--voice"
-                      }`}
-                      aria-hidden="true"
-                    >
-                      {callMatch[1]}
-                    </span>
-                    <span className="bubbleCallText">{callMatch[2]}</span>
-                  </div>
-                ) : (
-                  <div className="bubbleText">{msg.text}</div>
-                )}
-                <div className="bubbleFooter">
-                  <span className="msgTime">{time}</span>
-                  {isSent && (
-                    <span
-                      className={`ticks ${msg.seen ? "ticksRead" : "ticksSent"}`}
-                      title={msg.seen ? "Read" : "Delivered"}
-                    >
-                      <span className="tick">✓</span>
-                      <span className="tick">✓</span>
-                    </span>
+                    ⋮
+                  </button>
+                  {openMessageMenuId === msg._id && (
+                    <div className="messageDeleteMenu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="messageDeleteMenuItem"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteMessage(msg._id, "me");
+                        }}
+                      >
+                        Delete for me
+                      </button>
+                      {isSent && !isRevoked && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="messageDeleteMenuItem messageDeleteMenuItem--danger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm("Delete this message for everyone?")) {
+                              void handleDeleteMessage(msg._id, "everyone");
+                            }
+                          }}
+                        >
+                          Delete for everyone
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1633,7 +1796,6 @@ const ChatWindow = ({
           callState.peerId &&
           String(callState.peerId) === String(selectedUserId) &&
           peerIsOnline;
-        const elapsedSec = Math.floor(callElapsedMs / 1000);
         const statusText = incomingCall
           ? incomingCall.isVideo ? "Incoming video call" : "Incoming voice call"
           : callState.phase === "calling"
@@ -1641,8 +1803,14 @@ const ChatWindow = ({
             : callState.phase === "connecting"
               ? "Connecting..."
               : callStartedAt
-                ? formatRecordingClock(elapsedSec)
+                ? null
                 : "In call";
+        const statusLine =
+          statusText != null ? (
+            statusText
+          ) : (
+            <CallDurationClock startedAt={callStartedAt} />
+          );
 
         const mainStream = isLocalMain ? localCallStream : remoteCallStream;
         const pipStream = isLocalMain ? remoteCallStream : localCallStream;
@@ -1665,12 +1833,7 @@ const ChatWindow = ({
             aria-label="Call dialog"
           >
             {!isFullscreenVideo && remoteCallStream && (
-              <audio
-                autoPlay
-                ref={(el) => {
-                  if (el && remoteCallStream) el.srcObject = remoteCallStream;
-                }}
-              />
+              <CallRemoteAudio stream={remoteCallStream} />
             )}
             <div
               className={`callCard${
@@ -1679,16 +1842,11 @@ const ChatWindow = ({
             >
               {isFullscreenVideo ? (
                 <>
-                  <video
-                    key={mainIsLocal ? "main-local" : "main-remote"}
+                  <CallStreamVideo
+                    stream={mainStream}
                     className="callRemoteVideo callRemoteVideo--fullscreen"
-                    autoPlay
-                    playsInline
                     muted={mainIsLocal}
                     onClick={swapCallViews}
-                    ref={(el) => {
-                      if (el && mainStream) el.srcObject = mainStream;
-                    }}
                   />
                   {!mainStream && (
                     <div className="callRemotePlaceholder">
@@ -1696,7 +1854,7 @@ const ChatWindow = ({
                         {(peerName || "?").charAt(0).toUpperCase()}
                       </div>
                       <p className="callRemoteName">{peerName}</p>
-                      <p className="callRemoteStatus">{statusText}</p>
+                      <p className="callRemoteStatus">{statusLine}</p>
                     </div>
                   )}
                   {mainIsLocal && isCameraOff && (
@@ -1711,7 +1869,7 @@ const ChatWindow = ({
                   <div className="callTopBar">
                     <p className="callTopName">{peerName}</p>
                     <p className="callTopStatus">
-                      {statusText}
+                      {statusLine}
                       {peerMuted && (
                         <span className="callPeerMutedBadge" title="Muted">
                           <IconMicOff />
@@ -1763,15 +1921,10 @@ const ChatWindow = ({
                     title="Tap to swap, drag to move"
                   >
                     {pipStream ? (
-                      <video
-                        key={mainIsLocal ? "pip-remote" : "pip-local"}
+                      <CallStreamVideo
+                        stream={pipStream}
                         className="callLocalVideo callLocalVideo--pip"
-                        autoPlay
                         muted={!mainIsLocal}
-                        playsInline
-                        ref={(el) => {
-                          if (el && pipStream) el.srcObject = pipStream;
-                        }}
                       />
                     ) : (
                       <div className="callLocalPipFallback" aria-hidden="true">
@@ -1852,7 +2005,7 @@ const ChatWindow = ({
                   <div className="callTopBar">
                     <p className="callTopName">{peerName}</p>
                     <p className="callTopStatus">
-                      {statusText}
+                      {statusLine}
                       {peerMuted && (
                         <span className="callPeerMutedBadge" title="Muted">
                           <IconMicOff />
@@ -1882,7 +2035,7 @@ const ChatWindow = ({
                       )}
                     </div>
                     <p className="callAudioName">{peerName}</p>
-                    <p className="callAudioStatus">{statusText}</p>
+                    <p className="callAudioStatus">{statusLine}</p>
                   </div>
 
                   {callError && (
@@ -1931,7 +2084,7 @@ const ChatWindow = ({
                     </div>
                     <h4 className="callTitle">{peerName}</h4>
                     {callError && <p className="callErr">{callError}</p>}
-                    <p className="callStatus">{statusText}</p>
+                    <p className="callStatus">{statusLine}</p>
                   </div>
                   <div className="callActions">
                     {incomingCall ? (
@@ -1990,7 +2143,9 @@ const ChatWindow = ({
                             isSent ? " callChatMsg--sent" : " callChatMsg--received"
                           }`}
                         >
-                          {msg.text || (msg.kind ? `[${msg.kind}]` : "")}
+                          {msg.deletedForEveryone
+                            ? "This message was deleted."
+                            : msg.text || (msg.kind ? `[${msg.kind}]` : "")}
                         </div>
                       );
                     })}

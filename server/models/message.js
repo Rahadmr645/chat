@@ -70,6 +70,16 @@ const messageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    /** User ids who chose “delete for me” — message hidden for them only. */
+    hiddenFromUsers: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+    },
+    /** Sender revoked message — both peers see a placeholder. */
+    deletedForEveryone: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

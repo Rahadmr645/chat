@@ -127,6 +127,15 @@ export const subscribeIncomingMessages = (callback) => {
   return () => socket?.off("getMessage", handler);
 };
 
+export const subscribeMessageRevoked = (callback) => {
+  if (!socket) return () => {};
+
+  const handler = (data) => callback(data);
+  socket.on("messageRevoked", handler);
+
+  return () => socket?.off("messageRevoked", handler);
+};
+
 export const subscribeTypingStatus = (callback) => {
   if (!socket) return () => {};
 

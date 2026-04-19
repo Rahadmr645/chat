@@ -269,10 +269,12 @@
     top: auto;
     right: 0;
     left: 0;
-    bottom: 0;
+    /* Clear mobile BottomNav (~56px) + home indicator; nav paints above waMain subtree */
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
     width: 100%;
     max-width: 100%;
-    max-height: 88vh;
+    max-height: min(88vh, calc(100vh - 56px - env(safe-area-inset-bottom, 0px) - 12px));
+    max-height: min(88vh, calc(100dvh - 56px - env(safe-area-inset-bottom, 0px) - 12px));
     border-radius: 16px 16px 0 0;
     border: none;
     border-top: 1px solid #2a3942;
@@ -312,7 +314,7 @@
   }
 
   .notifCenter__list {
-    padding-bottom: env(safe-area-inset-bottom, 8px);
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;
   }
 

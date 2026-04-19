@@ -416,6 +416,11 @@
     bottom: auto;
   }
 
+  /* Extra scroll room so last chat row previews are not flush against the bottom nav */
+  .waShell--chatsTab .dashboard--listOnly .chatList {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
   .requestActions {
     flex-direction: column;
     align-items: stretch;
