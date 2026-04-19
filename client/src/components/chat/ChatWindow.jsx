@@ -151,6 +151,8 @@ const CallStreamVideo = memo(function CallStreamVideo({
   className,
   muted,
   onClick,
+  /** Horizontal flip for local front camera so self-view matches a mirror (not for screen/back cam). */
+  mirror = false,
 }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -161,10 +163,11 @@ const CallStreamVideo = memo(function CallStreamVideo({
       el.srcObject = next;
     }
   }, [stream]);
+  const cls = [className, mirror ? "callStreamVideo--mirror" : ""].filter(Boolean).join(" ");
   return (
     <video
       ref={ref}
-      className={className}
+      className={cls}
       autoPlay
       playsInline
       muted={Boolean(muted)}
@@ -2929,6 +2932,11 @@ const ChatWindow = ({
                     stream={mainStream}
                     className="callRemoteVideo callRemoteVideo--fullscreen"
                     muted={mainIsLocal}
+                    mirror={
+                      mainIsLocal &&
+                      !isScreenSharing &&
+                      cameraFacing === "user"
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleFullscreenCallChrome();
@@ -3068,6 +3076,11 @@ const ChatWindow = ({
                         stream={pipStream}
                         className="callLocalVideo callLocalVideo--pip"
                         muted={!mainIsLocal}
+                        mirror={
+                          !mainIsLocal &&
+                          !isScreenSharing &&
+                          cameraFacing === "user"
+                        }
                       />
                     ) : (
                       <div className="callLocalPipFallback" aria-hidden="true">

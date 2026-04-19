@@ -1221,6 +1221,11 @@
   cursor: pointer;
 }
 
+/* Local front-camera self view: mirror so “right hand” matches what you expect */
+video.callStreamVideo--mirror {
+  transform: scaleX(-1);
+}
+
 .callRemotePlaceholder {
   position: absolute;
   inset: 0;
@@ -1264,14 +1269,14 @@
   color: #b9c7cf;
 }
 
-/* Self-view PiP: 9:16 portrait like IMO — fixed ratio, a bit taller than before */
+/* Self-view PiP: 9:16 portrait — wider clamp + taller cap = longer on screen */
 .callLocalPip {
   position: absolute;
-  width: clamp(118px, 30vw, 142px);
+  width: clamp(132px, 36vw, 168px);
   aspect-ratio: 9 / 16;
   height: auto;
-  max-height: min(52vh, 320px);
-  border-radius: 18px;
+  max-height: min(62vh, 420px);
+  border-radius: 20px;
   overflow: hidden;
   background: #f5d97a;
   border: 2px solid rgba(255, 255, 255, 0.85);
