@@ -1002,6 +1002,51 @@
   background: #d94f4f;
 }
 
+/* ===== Call summary bubble ===== */
+.bubble.bubbleCall {
+  padding: 8px 12px;
+  background: rgba(0, 168, 132, 0.12);
+  border: 1px solid rgba(0, 168, 132, 0.35);
+}
+
+.bubbleSent.bubbleCall {
+  background: rgba(0, 168, 132, 0.2);
+}
+
+.bubbleCallRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 140px;
+}
+
+.bubbleCallIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 16px;
+  flex-shrink: 0;
+  background: rgba(0, 168, 132, 0.25);
+  color: #fff;
+}
+
+.bubbleCallIcon--video {
+  background: rgba(0, 168, 132, 0.35);
+}
+
+.bubbleCallIcon--voice {
+  background: rgba(54, 134, 240, 0.35);
+}
+
+.bubbleCallText {
+  font-size: 14px;
+  color: #e9edef;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
 /* ===== Full-screen video call ===== */
 .callOverlay--fullscreen {
   position: fixed;
@@ -1032,6 +1077,7 @@
   height: 100%;
   object-fit: cover;
   background: #1f2a33;
+  cursor: pointer;
 }
 
 .callRemotePlaceholder {
@@ -1046,6 +1092,10 @@
   background: linear-gradient(180deg, #2c3e50 0%, #1a242c 100%);
   padding: 24px;
   text-align: center;
+}
+
+.callRemotePlaceholder--overlay {
+  background: linear-gradient(180deg, rgba(44, 62, 80, 0.92) 0%, rgba(26, 36, 44, 0.92) 100%);
 }
 
 .callRemoteAvatar {
@@ -1075,8 +1125,6 @@
 
 .callLocalPip {
   position: absolute;
-  top: 18px;
-  left: 18px;
   width: 110px;
   height: 150px;
   border-radius: 14px;
@@ -1085,6 +1133,61 @@
   border: 2px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   z-index: 5;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.callLocalPip:hover {
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+}
+
+.callLocalPip--dragging {
+  cursor: grabbing;
+  transform: scale(1.03);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
+.callLocalPipFallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 36px;
+  font-weight: 600;
+  color: #1f2a33;
+  background: linear-gradient(180deg, #f5d97a 0%, #d8b94a 100%);
+}
+
+.callTopBar {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.callTopName {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.callTopStatus {
+  margin: 0;
+  font-size: 13px;
+  color: #e9edef;
+  opacity: 0.95;
 }
 
 .callLocalVideo--pip {
@@ -1181,6 +1284,141 @@
   height: 24px;
 }
 
+/* ===== Full-screen audio call ===== */
+.callOverlay--audio {
+  background: #0b141a;
+}
+
+.callCard--audio {
+  background: linear-gradient(180deg, #1f3b3a 0%, #102528 60%, #0b141a 100%);
+  color: #e9edef;
+}
+
+.callAudioBg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.callAudioBgImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(28px) brightness(0.45) saturate(1.2);
+  transform: scale(1.15);
+}
+
+.callAudioCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 24px;
+  z-index: 2;
+}
+
+.callAudioAvatar {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.callAudioAvatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.callAudioAvatarInitial {
+  font-size: 64px;
+  font-weight: 600;
+  color: #e9edef;
+}
+
+.callAudioPulse {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 168, 132, 0.55);
+  pointer-events: none;
+  animation: callAudioRing 2s ease-out infinite;
+}
+
+.callAudioPulse--2 {
+  animation-delay: 1s;
+}
+
+@keyframes callAudioRing {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+.callAudioName {
+  margin: 8px 0 0;
+  font-size: 26px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.callAudioStatus {
+  margin: 0;
+  font-size: 15px;
+  color: #cfd8dc;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* ===== Incoming-call dialog (compact) ===== */
+.callIncomingHeader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.callIncomingAvatar {
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin-bottom: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.callIncomingAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.callIncomingAvatar span {
+  font-size: 34px;
+  font-weight: 600;
+  color: #e9edef;
+}
+
 @media (max-width: 480px) {
   .callLocalPip {
     width: 92px;
@@ -1197,6 +1435,19 @@
   .callControlBar {
     gap: 14px;
     bottom: 20px;
+  }
+
+  .callAudioAvatar {
+    width: 132px;
+    height: 132px;
+  }
+
+  .callAudioAvatarInitial {
+    font-size: 54px;
+  }
+
+  .callAudioName {
+    font-size: 22px;
   }
 }
 

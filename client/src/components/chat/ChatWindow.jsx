@@ -46,6 +46,7 @@ import {
   IconMicOff,
   IconSearch,
   IconSend,
+  IconSwitchCamera,
   IconTrash,
   IconVideo,
   IconVideoOff,
@@ -95,6 +96,12 @@ const ChatWindow = ({
   const [remoteCallStream, setRemoteCallStream] = useState(null);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState("user");
+  const [callStartedAt, setCallStartedAt] = useState(null);
+  const [callElapsedMs, setCallElapsedMs] = useState(0);
+  const [isLocalMain, setIsLocalMain] = useState(false);
+  const [pipPos, setPipPos] = useState({ x: 18, y: 18 });
+  const [isPipDragging, setIsPipDragging] = useState(false);
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
 
@@ -239,6 +246,11 @@ const ChatWindow = ({
     setIncomingCall(null);
     setIsMicMuted(false);
     setIsCameraOff(false);
+    setCameraFacing("user");
+    setCallStartedAt(null);
+    setCallElapsedMs(0);
+    setIsLocalMain(false);
+    setPipPos({ x: 18, y: 18 });
     setCallState({
       phase: "idle",
       peerId: "",
@@ -267,6 +279,86 @@ const ChatWindow = ({
     });
     setIsCameraOff(next);
   }, [isCameraOff]);
+
+  const postCallSummaryMessage = useCallback(
+    async ({ receiverId, isVideo, startedAt, status }) => {
+      if (!receiverId || !token) return;
+      const icon = isVideo ? "📹" : "📞";
+      const label = isVideo ? "Video call" : "Voice call";
+      let text = "";
+      if (status === "completed" && startedAt) {
+        const sec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        text = `${icon} ${label} · ${formatRecordingClock(sec)}`;
+      } else if (status === "declined") {
+        text = `${icon} ${label} · Declined`;
+      } else if (status === "cancelled") {
+        text = `${icon} ${label} · Cancelled`;
+      } else if (status === "missed") {
+        text = `${icon} Missed ${label.toLowerCase()}`;
+      } else {
+        return;
+      }
+      try {
+        const saved = await apiRequest({
+          method: "POST",
+          path: "/api/messages/send",
+          token,
+          body: { receiverId: String(receiverId), text },
+        });
+        setMessages((prev) => [...prev, saved]);
+      } catch {
+        /* ignore — call summary is best-effort */
+      }
+    },
+    [token]
+  );
+
+  const switchCamera = useCallback(async () => {
+    const pc = pcRef.current;
+    const stream = localCallStreamRef.current;
+    if (!pc || !stream) return;
+    const nextFacing = cameraFacing === "user" ? "environment" : "user";
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: nextFacing } },
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+      if (sender) await sender.replaceTrack(newVideoTrack);
+      const oldVideoTracks = stream.getVideoTracks();
+      oldVideoTracks.forEach((t) => {
+        stream.removeTrack(t);
+        t.stop();
+      });
+      stream.addTrack(newVideoTrack);
+      newVideoTrack.enabled = !isCameraOff;
+      setLocalCallStream(stream);
+      setCameraFacing(nextFacing);
+    } catch (err) {
+      setCallError(err?.message || "Could not switch camera.");
+    }
+  }, [cameraFacing, isCameraOff]);
+
+  const swapCallViews = useCallback(() => {
+    setIsLocalMain((prev) => !prev);
+  }, []);
+
+  useEffect(() => {
+    if (callState.phase === "in-call" && !callStartedAt) {
+      setCallStartedAt(Date.now());
+    }
+  }, [callState.phase, callStartedAt]);
+
+  useEffect(() => {
+    if (!callStartedAt) return undefined;
+    setCallElapsedMs(Date.now() - callStartedAt);
+    const id = setInterval(() => {
+      setCallElapsedMs(Date.now() - callStartedAt);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [callStartedAt]);
 
   const addPendingIceCandidates = useCallback(async () => {
     const pc = pcRef.current;
@@ -324,22 +416,49 @@ const ChatWindow = ({
   const endCall = useCallback(() => {
     const me = currentUserIdRef.current;
     const peerId = callState.peerId || incomingCall?.senderId;
+    const wasVideo = Boolean(callState.isVideo || incomingCall?.isVideo);
+    const startedAt = callStartedAt;
     if (me && peerId) {
       emitCallEnd({ senderId: String(me), receiverId: String(peerId) });
     }
+    if (peerId) {
+      void postCallSummaryMessage({
+        receiverId: peerId,
+        isVideo: wasVideo,
+        startedAt,
+        status: startedAt ? "completed" : "cancelled",
+      });
+    }
     cleanupCall();
     setCallError("");
-  }, [callState.peerId, cleanupCall, incomingCall?.senderId]);
+  }, [
+    callState.peerId,
+    callState.isVideo,
+    cleanupCall,
+    incomingCall?.senderId,
+    incomingCall?.isVideo,
+    callStartedAt,
+    postCallSummaryMessage,
+  ]);
 
   const rejectIncomingCall = useCallback(() => {
     const me = currentUserIdRef.current;
     const peerId = incomingCall?.senderId;
+    const wasVideo = Boolean(incomingCall?.isVideo);
     if (me && peerId) {
       emitCallReject({ senderId: String(me), receiverId: String(peerId) });
     }
+    if (peerId) {
+      void postCallSummaryMessage({
+        receiverId: peerId,
+        isVideo: wasVideo,
+        startedAt: null,
+        status: "declined",
+      });
+    }
     setIncomingCall(null);
     setCallState((prev) => ({ ...prev, phase: "idle" }));
-  }, [incomingCall?.senderId]);
+  }, [incomingCall?.senderId, incomingCall?.isVideo, postCallSummaryMessage]);
 
   const getCallMediaStream = useCallback(async (preferVideo) => {
     if (!window.isSecureContext) {
@@ -1056,12 +1175,21 @@ const ChatWindow = ({
           const isVideo = msg.kind === "video";
           const isAudioFile = msg.kind === "audio";
           const isFile = msg.kind === "file";
+          const callMatch =
+            !isVoice && !isImage && !isVideo && !isAudioFile && !isFile && msg.text
+              ? /^(📹|📞)\s+(.+)$/.exec(msg.text.trim())
+              : null;
+          const isCallSummary = Boolean(callMatch);
           return (
             <div
               key={msg._id}
               className={`messageRow ${isSent ? "sent" : "received"}`}
             >
-              <div className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}`}>
+              <div
+                className={`bubble ${isSent ? "bubbleSent" : "bubbleReceived"}${
+                  isCallSummary ? " bubbleCall" : ""
+                }`}
+              >
                 {isVoice ? (
                   <div className="bubbleVoice">
                     <VoiceMessagePlayer
@@ -1105,6 +1233,18 @@ const ChatWindow = ({
                       <small>{formatFileSize(msg.mediaSizeBytes)}</small>
                     </span>
                   </a>
+                ) : isCallSummary ? (
+                  <div className="bubbleCallRow">
+                    <span
+                      className={`bubbleCallIcon${
+                        callMatch[1] === "📹" ? " bubbleCallIcon--video" : " bubbleCallIcon--voice"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {callMatch[1]}
+                    </span>
+                    <span className="bubbleCallText">{callMatch[2]}</span>
+                  </div>
                 ) : (
                   <div className="bubbleText">{msg.text}</div>
                 )}
@@ -1206,38 +1346,75 @@ const ChatWindow = ({
       {(incomingCall || callState.phase !== "idle") && (() => {
         const isFullscreenVideo =
           !incomingCall && callState.isVideo && callState.phase !== "idle";
+        const isFullscreenAudio =
+          !incomingCall && !callState.isVideo && callState.phase !== "idle";
         const peerName =
           callState.peerLabel ||
           getContactLabel(callState.peerId) ||
           (incomingCall && getContactLabel(incomingCall.senderId)) ||
           "Call";
+        const callPeerOnline =
+          callState.peerId &&
+          String(callState.peerId) === String(selectedUserId) &&
+          peerIsOnline;
+        const elapsedSec = Math.floor(callElapsedMs / 1000);
         const statusText = incomingCall
           ? incomingCall.isVideo ? "Incoming video call" : "Incoming voice call"
           : callState.phase === "calling"
-            ? "Calling..."
+            ? callPeerOnline ? "Ringing..." : "Calling..."
             : callState.phase === "connecting"
               ? "Connecting..."
-              : "In call";
+              : callStartedAt
+                ? formatRecordingClock(elapsedSec)
+                : "In call";
+
+        const mainStream = isLocalMain ? localCallStream : remoteCallStream;
+        const pipStream = isLocalMain ? remoteCallStream : localCallStream;
+        const mainIsLocal = isLocalMain;
+
+        const peerAvatarUrl =
+          (selectedUser &&
+            String(selectedUser._id) === String(callState.peerId || incomingCall?.senderId) &&
+            selectedUser.avatarUrl) ||
+          null;
+        const peerInitial = (peerName || "?").charAt(0).toUpperCase();
 
         return (
           <div
-            className={`callOverlay${isFullscreenVideo ? " callOverlay--fullscreen" : ""}`}
+            className={`callOverlay${
+              isFullscreenVideo || isFullscreenAudio ? " callOverlay--fullscreen" : ""
+            }${isFullscreenAudio ? " callOverlay--audio" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label="Call dialog"
           >
-            <div className={`callCard${isFullscreenVideo ? " callCard--fullscreen" : ""}`}>
+            {!isFullscreenVideo && remoteCallStream && (
+              <audio
+                autoPlay
+                ref={(el) => {
+                  if (el && remoteCallStream) el.srcObject = remoteCallStream;
+                }}
+              />
+            )}
+            <div
+              className={`callCard${
+                isFullscreenVideo || isFullscreenAudio ? " callCard--fullscreen" : ""
+              }${isFullscreenAudio ? " callCard--audio" : ""}`}
+            >
               {isFullscreenVideo ? (
                 <>
                   <video
+                    key={mainIsLocal ? "main-local" : "main-remote"}
                     className="callRemoteVideo callRemoteVideo--fullscreen"
                     autoPlay
                     playsInline
+                    muted={mainIsLocal}
+                    onClick={swapCallViews}
                     ref={(el) => {
-                      if (el && remoteCallStream) el.srcObject = remoteCallStream;
+                      if (el && mainStream) el.srcObject = mainStream;
                     }}
                   />
-                  {!remoteCallStream && (
+                  {!mainStream && (
                     <div className="callRemotePlaceholder">
                       <div className="callRemoteAvatar" aria-hidden="true">
                         {(peerName || "?").charAt(0).toUpperCase()}
@@ -1246,18 +1423,78 @@ const ChatWindow = ({
                       <p className="callRemoteStatus">{statusText}</p>
                     </div>
                   )}
+                  {mainIsLocal && isCameraOff && (
+                    <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
+                      <div className="callRemoteAvatar" aria-hidden="true">
+                        <IconVideoOff />
+                      </div>
+                      <p className="callRemoteStatus">Camera off</p>
+                    </div>
+                  )}
 
-                  <div className="callLocalPip">
-                    <video
-                      className="callLocalVideo callLocalVideo--pip"
-                      autoPlay
-                      muted
-                      playsInline
-                      ref={(el) => {
-                        if (el && localCallStream) el.srcObject = localCallStream;
-                      }}
-                    />
-                    {isCameraOff && (
+                  <div className="callTopBar">
+                    <p className="callTopName">{peerName}</p>
+                    <p className="callTopStatus">{statusText}</p>
+                  </div>
+
+                  <div
+                    className={`callLocalPip${isPipDragging ? " callLocalPip--dragging" : ""}`}
+                    style={{ left: `${pipPos.x}px`, top: `${pipPos.y}px` }}
+                    onPointerDown={(e) => {
+                      const startX = e.clientX;
+                      const startY = e.clientY;
+                      const origX = pipPos.x;
+                      const origY = pipPos.y;
+                      const parent = e.currentTarget.parentElement;
+                      const pip = e.currentTarget;
+                      const parentRect = parent?.getBoundingClientRect();
+                      const pipRect = pip.getBoundingClientRect();
+                      let moved = false;
+                      const onMove = (ev) => {
+                        const dx = ev.clientX - startX;
+                        const dy = ev.clientY - startY;
+                        if (!moved && Math.hypot(dx, dy) > 4) {
+                          moved = true;
+                          setIsPipDragging(true);
+                        }
+                        if (!parentRect) return;
+                        const maxX = Math.max(0, parentRect.width - pipRect.width);
+                        const maxY = Math.max(0, parentRect.height - pipRect.height);
+                        const nx = Math.min(Math.max(0, origX + dx), maxX);
+                        const ny = Math.min(Math.max(0, origY + dy), maxY);
+                        setPipPos({ x: nx, y: ny });
+                      };
+                      const onUp = () => {
+                        window.removeEventListener("pointermove", onMove);
+                        window.removeEventListener("pointerup", onUp);
+                        setIsPipDragging(false);
+                        if (!moved) swapCallViews();
+                      };
+                      window.addEventListener("pointermove", onMove);
+                      window.addEventListener("pointerup", onUp);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Swap or drag preview"
+                    title="Tap to swap, drag to move"
+                  >
+                    {pipStream ? (
+                      <video
+                        key={mainIsLocal ? "pip-remote" : "pip-local"}
+                        className="callLocalVideo callLocalVideo--pip"
+                        autoPlay
+                        muted={!mainIsLocal}
+                        playsInline
+                        ref={(el) => {
+                          if (el && pipStream) el.srcObject = pipStream;
+                        }}
+                      />
+                    ) : (
+                      <div className="callLocalPipFallback" aria-hidden="true">
+                        {(peerName || "?").charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    {!mainIsLocal && isCameraOff && (
                       <div className="callLocalPipOff" aria-hidden="true">
                         <IconVideoOff />
                       </div>
@@ -1290,6 +1527,88 @@ const ChatWindow = ({
                     <button
                       type="button"
                       className="callCtrlBtn"
+                      onClick={() => void switchCamera()}
+                      aria-label="Switch camera"
+                      title={cameraFacing === "user" ? "Use back camera" : "Use front camera"}
+                    >
+                      <IconSwitchCamera />
+                    </button>
+                    <button
+                      type="button"
+                      className="callCtrlBtn"
+                      aria-label="Chat"
+                      title="Chat"
+                    >
+                      <IconChatBubble />
+                    </button>
+                    <button
+                      type="button"
+                      className="callCtrlBtn callCtrlBtn--end"
+                      onClick={endCall}
+                      aria-label="End call"
+                      title="End call"
+                    >
+                      <IconEndCall />
+                    </button>
+                  </div>
+                </>
+              ) : isFullscreenAudio ? (
+                <>
+                  <div className="callAudioBg" aria-hidden="true">
+                    {peerAvatarUrl && (
+                      <img
+                        src={peerAvatarUrl}
+                        alt=""
+                        className="callAudioBgImg"
+                      />
+                    )}
+                  </div>
+
+                  <div className="callTopBar">
+                    <p className="callTopName">{peerName}</p>
+                    <p className="callTopStatus">{statusText}</p>
+                  </div>
+
+                  <div className="callAudioCenter">
+                    <div className="callAudioAvatar">
+                      {peerAvatarUrl ? (
+                        <img
+                          src={peerAvatarUrl}
+                          alt={peerName}
+                          className="callAudioAvatarImg"
+                        />
+                      ) : (
+                        <span className="callAudioAvatarInitial">{peerInitial}</span>
+                      )}
+                      {(callState.phase === "calling" ||
+                        callState.phase === "connecting") && (
+                        <>
+                          <span className="callAudioPulse callAudioPulse--1" />
+                          <span className="callAudioPulse callAudioPulse--2" />
+                        </>
+                      )}
+                    </div>
+                    <p className="callAudioName">{peerName}</p>
+                    <p className="callAudioStatus">{statusText}</p>
+                  </div>
+
+                  {callError && (
+                    <p className="callErr callErr--floating">{callError}</p>
+                  )}
+
+                  <div className="callControlBar">
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${isMicMuted ? " callCtrlBtn--off" : ""}`}
+                      onClick={toggleMicMute}
+                      aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                      title={isMicMuted ? "Unmute" : "Mute"}
+                    >
+                      {isMicMuted ? <IconMicOff /> : <IconMic />}
+                    </button>
+                    <button
+                      type="button"
+                      className="callCtrlBtn"
                       aria-label="Chat"
                       title="Chat"
                     >
@@ -1308,47 +1627,42 @@ const ChatWindow = ({
                 </>
               ) : (
                 <>
-                  <h4 className="callTitle">{peerName}</h4>
-                  {callError && <p className="callErr">{callError}</p>}
-                  <p className="callStatus">{statusText}</p>
-                  <div className="callMediaArea">
-                    {callState.isVideo && (
-                      <>
-                        <video
-                          className="callRemoteVideo"
-                          autoPlay
-                          playsInline
-                          ref={(el) => {
-                            if (el && remoteCallStream) el.srcObject = remoteCallStream;
-                          }}
-                        />
-                        <video
-                          className="callLocalVideo"
-                          autoPlay
-                          muted
-                          playsInline
-                          ref={(el) => {
-                            if (el && localCallStream) el.srcObject = localCallStream;
-                          }}
-                        />
-                      </>
-                    )}
-                    {!callState.isVideo && (
-                      <div className="callAudioOnly">Audio call</div>
-                    )}
+                  <div className="callIncomingHeader">
+                    <div className="callIncomingAvatar">
+                      {peerAvatarUrl ? (
+                        <img src={peerAvatarUrl} alt={peerName} />
+                      ) : (
+                        <span>{peerInitial}</span>
+                      )}
+                    </div>
+                    <h4 className="callTitle">{peerName}</h4>
+                    {callError && <p className="callErr">{callError}</p>}
+                    <p className="callStatus">{statusText}</p>
                   </div>
                   <div className="callActions">
                     {incomingCall ? (
                       <>
-                        <button type="button" className="callBtn callBtn--decline" onClick={rejectIncomingCall}>
+                        <button
+                          type="button"
+                          className="callBtn callBtn--decline"
+                          onClick={rejectIncomingCall}
+                        >
                           Decline
                         </button>
-                        <button type="button" className="callBtn callBtn--accept" onClick={() => void acceptIncomingCall()}>
+                        <button
+                          type="button"
+                          className="callBtn callBtn--accept"
+                          onClick={() => void acceptIncomingCall()}
+                        >
                           Accept
                         </button>
                       </>
                     ) : (
-                      <button type="button" className="callBtn callBtn--decline" onClick={endCall}>
+                      <button
+                        type="button"
+                        className="callBtn callBtn--decline"
+                        onClick={endCall}
+                      >
                         End call
                       </button>
                     )}

@@ -122,6 +122,23 @@ const ChatSettingsPanel = ({
   const [q, setQ] = useState("");
   const [profileUploading, setProfileUploading] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [pendingActions, setPendingActions] = useState({});
+
+  const isPending = (key) => Boolean(pendingActions[key]);
+
+  const runWithLoading = async (key, fn) => {
+    if (pendingActions[key]) return;
+    setPendingActions((prev) => ({ ...prev, [key]: true }));
+    try {
+      await fn();
+    } finally {
+      setPendingActions((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     if (!open) {
@@ -336,10 +353,20 @@ const ChatSettingsPanel = ({
               <div className="chatSettingsAddRow">
                 <button
                   type="button"
-                  className="chatSettingsAddBtn"
-                  onClick={onSendFriendRequestByEmail}
+                  className="chatSettingsAddBtn actionBtn"
+                  onClick={() =>
+                    runWithLoading("addByEmail", () => onSendFriendRequestByEmail())
+                  }
+                  disabled={isPending("addByEmail")}
                 >
-                  Add friend by email
+                  {isPending("addByEmail") ? (
+                    <>
+                      <span className="actionSpinner" aria-hidden="true" />
+                      Adding...
+                    </>
+                  ) : (
+                    "Add friend by email"
+                  )}
                 </button>
               </div>
             </>
@@ -379,24 +406,72 @@ const ChatSettingsPanel = ({
                   <div className="requestActions">
                     <button
                       type="button"
-                      className="btnAccept"
-                      onClick={() => onAcceptRequest(req._id)}
+                      className="btnAccept actionBtn"
+                      onClick={() =>
+                        runWithLoading(`accept:${req._id}`, () =>
+                          onAcceptRequest(req._id)
+                        )
+                      }
+                      disabled={
+                        isPending(`accept:${req._id}`) ||
+                        isPending(`reject:${req._id}`) ||
+                        isPending(`block:${req._id}`)
+                      }
                     >
-                      Accept
+                      {isPending(`accept:${req._id}`) ? (
+                        <>
+                          <span className="actionSpinner actionSpinner--light" aria-hidden="true" />
+                          Accepting...
+                        </>
+                      ) : (
+                        "Accept"
+                      )}
                     </button>
                     <button
                       type="button"
-                      className="btnIgnore"
-                      onClick={() => onRejectRequest(req._id)}
+                      className="btnIgnore actionBtn"
+                      onClick={() =>
+                        runWithLoading(`reject:${req._id}`, () =>
+                          onRejectRequest(req._id)
+                        )
+                      }
+                      disabled={
+                        isPending(`accept:${req._id}`) ||
+                        isPending(`reject:${req._id}`) ||
+                        isPending(`block:${req._id}`)
+                      }
                     >
-                      Ignore
+                      {isPending(`reject:${req._id}`) ? (
+                        <>
+                          <span className="actionSpinner" aria-hidden="true" />
+                          Ignoring...
+                        </>
+                      ) : (
+                        "Ignore"
+                      )}
                     </button>
                     <button
                       type="button"
-                      className="btnBlock"
-                      onClick={() => onBlockFromRequest(req._id)}
+                      className="btnBlock actionBtn"
+                      onClick={() =>
+                        runWithLoading(`block:${req._id}`, () =>
+                          onBlockFromRequest(req._id)
+                        )
+                      }
+                      disabled={
+                        isPending(`accept:${req._id}`) ||
+                        isPending(`reject:${req._id}`) ||
+                        isPending(`block:${req._id}`)
+                      }
                     >
-                      Block
+                      {isPending(`block:${req._id}`) ? (
+                        <>
+                          <span className="actionSpinner actionSpinner--light" aria-hidden="true" />
+                          Blocking...
+                        </>
+                      ) : (
+                        "Block"
+                      )}
                     </button>
                   </div>
                 </div>
@@ -428,10 +503,22 @@ const ChatSettingsPanel = ({
                   ) : (
                     <button
                       type="button"
-                      className="addFriendBtn"
-                      onClick={() => onSendFriendRequest(user._id)}
+                      className="addFriendBtn actionBtn"
+                      onClick={() =>
+                        runWithLoading(`send:${user._id}`, () =>
+                          onSendFriendRequest(user._id)
+                        )
+                      }
+                      disabled={isPending(`send:${user._id}`)}
                     >
-                      Send request
+                      {isPending(`send:${user._id}`) ? (
+                        <>
+                          <span className="actionSpinner actionSpinner--light" aria-hidden="true" />
+                          Sending...
+                        </>
+                      ) : (
+                        "Send request"
+                      )}
                     </button>
                   )}
                 </div>
@@ -453,8 +540,22 @@ const ChatSettingsPanel = ({
                       <p>{user.email}</p>
                     </div>
                   </div>
-                  <button type="button" className="btnUnblock" onClick={() => onUnblock(user._id)}>
-                    Unblock
+                  <button
+                    type="button"
+                    className="btnUnblock actionBtn"
+                    onClick={() =>
+                      runWithLoading(`unblock:${user._id}`, () => onUnblock(user._id))
+                    }
+                    disabled={isPending(`unblock:${user._id}`)}
+                  >
+                    {isPending(`unblock:${user._id}`) ? (
+                      <>
+                        <span className="actionSpinner" aria-hidden="true" />
+                        Unblocking...
+                      </>
+                    ) : (
+                      "Unblock"
+                    )}
                   </button>
                 </div>
               ))}
