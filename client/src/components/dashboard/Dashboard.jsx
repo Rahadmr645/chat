@@ -445,6 +445,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
     .join(" ");
 
   const mainClass = ["waMain", !isMobile ? "waMain--desk" : ""].filter(Boolean).join(" ");
+  const showBottomNav = !isMobile || !activeUserId;
 
   return (
     <div className={shellClass}>
@@ -620,7 +621,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
           </div>
         </div>
       </div>
-      <BottomNav active={mainTab} onSelect={onMobileSelectTab} />
+      {showBottomNav && <BottomNav active={mainTab} onSelect={onMobileSelectTab} />}
 
       {callRecoveryPrompt && (
         <div

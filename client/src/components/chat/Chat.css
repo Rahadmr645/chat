@@ -117,6 +117,7 @@
   display: flex;
   width: 100%;
   position: relative;
+  min-width: 0;
 }
 
 .messageRow.sent {
@@ -134,6 +135,7 @@
   gap: 4px;
   max-width: min(92%, 480px);
   position: relative;
+  min-width: 0;
 }
 
 .messageRow.sent .messageRowBubbles {
@@ -144,6 +146,7 @@
   position: relative;
   flex: 0 1 auto;
   max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -371,6 +374,8 @@
   border-radius: 8px;
   font-size: clamp(13px, 0.25rem + 2.4vw, 15px);
   line-height: 1.38;
+  box-sizing: border-box;
+  width: fit-content;
 }
 
 .bubbleSent {
@@ -388,6 +393,28 @@
 .bubbleText {
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.bubbleTextGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bubbleTextToggle {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: #53bdeb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bubbleTextToggle:hover {
+  text-decoration: underline;
 }
 
 .bubbleVoice {
@@ -1126,7 +1153,7 @@
 
 /* ===== Call summary bubble ===== */
 .bubble.bubbleCall {
-  padding: 8px 12px;
+  padding: 9px 12px 7px;
   background: rgba(0, 168, 132, 0.12);
   border: 1px solid rgba(0, 168, 132, 0.35);
 }
@@ -1136,10 +1163,12 @@
 }
 
 .bubbleCallRow {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
   gap: 10px;
-  min-width: 140px;
+  min-width: 0;
+  margin-bottom: 2px;
 }
 
 .bubbleCallIcon {
@@ -1148,10 +1177,14 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  font-size: 16px;
   flex-shrink: 0;
   background: rgba(0, 168, 132, 0.25);
   color: #fff;
+}
+
+.bubbleCallIconGlyph {
+  width: 16px;
+  height: 16px;
 }
 
 .bubbleCallIcon--video {
@@ -1167,6 +1200,13 @@
   color: #e9edef;
   font-weight: 500;
   line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bubble.bubbleCall .bubbleFooter {
+  margin-top: 4px;
 }
 
 /* ===== Full-screen video call ===== */
@@ -1944,11 +1984,11 @@ video.callStreamVideo--mirror {
   }
 
   .messageRowBubbles {
-    max-width: min(88%, 560px);
+    max-width: min(90%, clamp(420px, 62vw, 760px));
   }
 
   .bubble {
-    max-width: min(72%, 520px);
+    max-width: min(100%, clamp(280px, 56vw, 640px));
     font-size: 15px;
     padding: 7px 10px 5px 11px;
   }

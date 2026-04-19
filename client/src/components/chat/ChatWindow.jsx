@@ -31,11 +31,6 @@ import {
   subscribeVoiceRecordingStatus,
 } from "../../socket/Socket.js";
 import { apiRequest, apiUploadMediaMessage, apiUploadVoice } from "../../services/api.js";
-import {
-  decryptConversationText,
-  encryptTextForPeer,
-  ensureDeviceKeys,
-} from "../../crypto/e2eeText.js";
 import { persistCallLog } from "../../services/callLogApi.js";
 import {
   formatLastSeen,
@@ -83,6 +78,7 @@ const MARK_READ_DEBOUNCE_MS = 400;
 const MESSAGE_LONG_PRESS_MS = 520;
 const MESSAGE_CTX_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const MESSAGE_CTX_EXTRA_REACTIONS = ["🎉", "🔥", "💯", "👎", "✨", "🙌", "😭", "🤝"];
+const LONG_MESSAGE_PREVIEW_CHARS = 220;
 const DEFAULT_RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
@@ -245,7 +241,6 @@ const ChatWindow = ({
   resolveFriendPublicKey,
 }) => {
   const [messages, setMessages] = useState([]);
-  const [e2eeDecrypted, setE2eeDecrypted] = useState({});
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -286,6 +281,7 @@ const ChatWindow = ({
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
   const [ctxReactionsExpanded, setCtxReactionsExpanded] = useState(false);
+  const [expandedMessageIds, setExpandedMessageIds] = useState(() => new Set());
   const messageLongPressRef = useRef({ timer: null, startX: 0, startY: 0 });
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
@@ -345,64 +341,6 @@ const ChatWindow = ({
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
-
-  const syncMyE2eePublicKey = useCallback(async () => {
-    if (!token || !currentUser?._id || !globalThis.crypto?.subtle) return;
-    const { publicJwkString } = await ensureDeviceKeys(currentUser._id);
-    const server = String(currentUser.encryptionPublicKey || "").trim();
-    if (publicJwkString === server) return;
-    const data = await apiRequest({
-      method: "PATCH",
-      path: "/api/auth/profile/encryption-public-key",
-      token,
-      body: { encryptionPublicKey: publicJwkString },
-    });
-    onProfileUpdate?.(data.user);
-  }, [token, currentUser?._id, currentUser?.encryptionPublicKey, onProfileUpdate]);
-
-  useEffect(() => {
-    void syncMyE2eePublicKey();
-  }, [syncMyE2eePublicKey]);
-
-  useEffect(() => {
-    const peerKey =
-      selectedUser?.encryptionPublicKey ||
-      (selectedUserId ? resolveFriendPublicKeyRef.current?.(String(selectedUserId)) : "");
-    if (!currentUser?._id || !String(peerKey || "").trim()) {
-      setE2eeDecrypted({});
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      const next = {};
-      for (const m of messages) {
-        if (m.deletedForEveryone || !m.textE2ee || !m.textCipherIv) continue;
-        const kind = m.kind || "text";
-        if (!["text", "image", "video", "audio", "file"].includes(kind)) continue;
-        const id = String(m._id);
-        try {
-          next[id] = await decryptConversationText({
-            userId: currentUser._id,
-            peerPublicJwk: String(peerKey),
-            ciphertextB64: m.text,
-            ivB64: m.textCipherIv,
-          });
-        } catch {
-          next[id] = "[Could not decrypt]";
-        }
-      }
-      if (!cancelled) setE2eeDecrypted(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    messages,
-    selectedUserId,
-    currentUser?._id,
-    selectedUser?.encryptionPublicKey,
-    resolveFriendPublicKey,
-  ]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -869,25 +807,6 @@ const ChatWindow = ({
       };
       try {
         let body = { receiverId: String(receiverId), text };
-        const peerPk = resolveFriendPublicKeyRef.current?.(String(receiverId));
-        if (peerPk?.trim() && currentUser?._id && globalThis.crypto?.subtle) {
-          try {
-            await ensureDeviceKeys(currentUser._id);
-            await syncMyE2eePublicKey();
-            const enc = await encryptTextForPeer({
-              userId: currentUser._id,
-              peerPublicJwk: peerPk,
-              plaintext: text,
-            });
-            body = {
-              receiverId: String(receiverId),
-              text: enc.ciphertextB64,
-              textCipherIv: enc.ivB64,
-            };
-          } catch {
-            /* fall back to plaintext summary if crypto fails */
-          }
-        }
         const saved = await apiRequest({
           method: "POST",
           path: "/api/messages/send",
@@ -901,7 +820,7 @@ const ChatWindow = ({
       if (outcome) void persistCallLog(logPayload);
       onRefreshDashboardRef.current?.();
     },
-    [token, syncMyE2eePublicKey, currentUser?._id]
+    [token]
   );
 
   const switchCamera = useCallback(async () => {
@@ -1798,6 +1717,7 @@ const ChatWindow = ({
   useEffect(() => {
     setPeerTyping(false);
     setPeerVoiceRecording(false);
+    setExpandedMessageIds(new Set());
   }, [selectedUserId]);
 
   useEffect(() => {
@@ -2046,29 +1966,13 @@ const ChatWindow = ({
     setError("");
     setMediaSending(true);
     try {
-      let textOut = String(pendingCaption || "").trim();
-      let textCipherIv = "";
-      const peerPk =
-        selectedUser?.encryptionPublicKey ||
-        resolveFriendPublicKeyRef.current?.(String(selectedUserId)) ||
-        "";
-      if (textOut && peerPk?.trim() && currentUser?._id && globalThis.crypto?.subtle) {
-        await ensureDeviceKeys(currentUser._id);
-        await syncMyE2eePublicKey();
-        const enc = await encryptTextForPeer({
-          userId: currentUser._id,
-          peerPublicJwk: String(peerPk),
-          plaintext: textOut,
-        });
-        textOut = enc.ciphertextB64;
-        textCipherIv = enc.ivB64;
-      }
+      const textOut = String(pendingCaption || "").trim();
       const savedMessage = await apiUploadMediaMessage({
         token,
         receiverId: selectedUserId,
         file: pendingAttachment.file,
         text: textOut,
-        textCipherIv,
+        textCipherIv: "",
       });
       setMessages((prev) => [...prev, savedMessage]);
       closeAttachmentComposer();
@@ -2114,39 +2018,8 @@ const ChatWindow = ({
     emitStopTyping(me, peer);
     clearTimeout(typingStopTimerRef.current);
 
-    const peerPk =
-      selectedUser?.encryptionPublicKey ||
-      resolveFriendPublicKeyRef.current?.(String(selectedUserId)) ||
-      "";
-    const hasSubtle = Boolean(globalThis.crypto?.subtle);
-    const useE2ee = Boolean(peerPk?.trim() && hasSubtle);
-
     try {
-      let body;
-      if (useE2ee) {
-        await ensureDeviceKeys(currentUser._id);
-        await syncMyE2eePublicKey();
-        const enc = await encryptTextForPeer({
-          userId: currentUser._id,
-          peerPublicJwk: String(peerPk),
-          plaintext: text.trim(),
-        });
-        body = {
-          receiverId: selectedUserId,
-          text: enc.ciphertextB64,
-          textCipherIv: enc.ivB64,
-        };
-      } else {
-        body = { receiverId: selectedUserId, text: text.trim() };
-        if (hasSubtle && currentUser?._id) {
-          try {
-            await ensureDeviceKeys(currentUser._id);
-            await syncMyE2eePublicKey();
-          } catch {
-            /* still send plaintext */
-          }
-        }
-      }
+      const body = { receiverId: selectedUserId, text: text.trim() };
 
       const savedMessage = await apiRequest({
         method: "POST",
@@ -2262,6 +2135,15 @@ const ChatWindow = ({
     clearMessageLongPressTimer();
   }, [clearMessageLongPressTimer]);
 
+  const toggleMessageExpanded = useCallback((messageId) => {
+    setExpandedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }, []);
+
   useEffect(() => () => clearMessageLongPressTimer(), [clearMessageLongPressTimer]);
 
   const onTextChange = (e) => {
@@ -2287,21 +2169,12 @@ const ChatWindow = ({
           reactions: message.reactions ?? [],
         };
         const kind = message.kind || "text";
-        if (
-          message.textE2ee &&
-          message.textCipherIv &&
-          !message.deletedForEveryone &&
-          ["text", "image", "video", "audio", "file"].includes(kind)
-        ) {
-          const d = e2eeDecrypted[id];
-          return {
-            ...base,
-            displayText: d !== undefined ? d : "…",
-          };
+        if (message.textE2ee && message.textCipherIv && !message.deletedForEveryone) {
+          return { ...base, displayText: "[Encrypted message from old device]" };
         }
         return { ...base, displayText: message.text ?? "" };
       }),
-    [messages, e2eeDecrypted]
+    [messages]
   );
 
   useEffect(() => {
@@ -2463,6 +2336,34 @@ const ChatWindow = ({
           const isCallSummary = Boolean(callMatch);
           const canCopyText =
             !isRevoked && Boolean(String(msg.displayText ?? "").trim());
+          const msgId = String(msg._id);
+          const textBody = String(msg.displayText ?? "");
+          const shouldCollapseText =
+            !isRevoked &&
+            !isCallSummary &&
+            textBody.length > LONG_MESSAGE_PREVIEW_CHARS;
+          const isTextExpanded = expandedMessageIds.has(msgId);
+          const visibleText =
+            shouldCollapseText && !isTextExpanded
+              ? `${textBody.slice(0, LONG_MESSAGE_PREVIEW_CHARS).trimEnd()}...`
+              : textBody;
+          const textBlock = textBody ? (
+            <div className="bubbleTextGroup">
+              <div className="bubbleText">{visibleText}</div>
+              {shouldCollapseText ? (
+                <button
+                  type="button"
+                  className="bubbleTextToggle"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMessageExpanded(msgId);
+                  }}
+                >
+                  {isTextExpanded ? "See less" : "See more"}
+                </button>
+              ) : null}
+            </div>
+          ) : null;
           const reactionChips = !isRevoked
             ? aggregateReactions(msg.reactions, currentUser._id)
             : [];
@@ -2509,9 +2410,7 @@ const ChatWindow = ({
                   ) : isImage ? (
                     <div className="bubbleMediaWrap">
                       <img src={msg.mediaUrl} alt="Shared" className="bubbleMedia bubbleMedia--image" />
-                      {msg.displayText ? (
-                        <div className="bubbleText">{msg.displayText}</div>
-                      ) : null}
+                      {textBlock}
                     </div>
                   ) : isVideo ? (
                     <div className="bubbleMediaWrap">
@@ -2521,16 +2420,12 @@ const ChatWindow = ({
                         className="bubbleMedia bubbleMedia--video"
                         src={msg.mediaUrl}
                       />
-                      {msg.displayText ? (
-                        <div className="bubbleText">{msg.displayText}</div>
-                      ) : null}
+                      {textBlock}
                     </div>
                   ) : isAudioFile ? (
                     <div className="bubbleMediaWrap">
                       <audio className="bubbleAudioFile" controls preload="metadata" src={msg.mediaUrl} />
-                      {msg.displayText ? (
-                        <div className="bubbleText">{msg.displayText}</div>
-                      ) : null}
+                      {textBlock}
                     </div>
                   ) : isFile ? (
                     <a
@@ -2555,12 +2450,16 @@ const ChatWindow = ({
                         }`}
                         aria-hidden="true"
                       >
-                        {callMatch[1]}
+                        {callMatch[1] === "📹" ? (
+                          <IconVideo className="bubbleCallIconGlyph" />
+                        ) : (
+                          <IconPhoneHandset className="bubbleCallIconGlyph" />
+                        )}
                       </span>
                       <span className="bubbleCallText">{callMatch[2]}</span>
                     </div>
                   ) : (
-                    <div className="bubbleText">{msg.displayText}</div>
+                    textBlock
                   )}
                   <div className="bubbleFooter">
                     <span className="msgTime">{time}</span>
