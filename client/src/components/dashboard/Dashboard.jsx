@@ -11,6 +11,7 @@ import ChatWindow from "../chat/ChatWindow";
 import ChatSettingsPanel from "../settings/ChatSettingsPanel.jsx";
 import { apiRequest } from "../../services/api.js";
 import { useMediaQuery } from "../../hooks/useMediaQuery.js";
+import { useMobileDashHistory } from "../../hooks/useMobileDashHistory.js";
 import {
   startCallRingtone,
   stopCallRingtone,
@@ -74,6 +75,28 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const [callRecoveryPrompt, setCallRecoveryPrompt] = useState(null);
   const callNotificationRef = useRef(null);
   const ringingActiveRef = useRef(false);
+  const settingsNestedPopRef = useRef(null);
+
+  const {
+    rememberTabBeforeChat,
+    clearTabBeforeChatIfClosing,
+    onMobileOpenChats,
+    onMobileCloseSettings,
+    onMobileSelectTab,
+    onMobileDismissCallRecovery,
+  } = useMobileDashHistory({
+    isMobile,
+    activeUserId,
+    settingsOpen,
+    mainTab,
+    callRecoveryPrompt,
+    setActiveUserId,
+    setSidebarOpen,
+    setSettingsOpen,
+    setMainTab,
+    setCallRecoveryPrompt,
+    settingsNestedBackRef: settingsNestedPopRef,
+  });
 
   const closeCallNotification = useCallback(() => {
     if (callNotificationRef.current) {
@@ -351,12 +374,19 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
       onOpenChat: (userId) => {
         if (!userId) return;
         setMainTab("chats");
+        rememberTabBeforeChat(String(userId));
+        clearTabBeforeChatIfClosing(String(userId));
         setActiveUserId(String(userId));
         if (isMobile) setSidebarOpen(false);
       },
       onOpenSettings: () => setSettingsOpen(true),
     });
-  }, [registerHandlers, isMobile]);
+  }, [
+    registerHandlers,
+    isMobile,
+    rememberTabBeforeChat,
+    clearTabBeforeChatIfClosing,
+  ]);
 
   useEffect(() => {
     if (loadingUsers) return;
@@ -400,6 +430,8 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   }, []);
 
   const selectUser = (userId) => {
+    clearTabBeforeChatIfClosing(userId || "");
+    if (userId) rememberTabBeforeChat(userId);
     setActiveUserId(userId);
     if (isMobile) setSidebarOpen(false);
   };
@@ -519,10 +551,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                   Boolean(activeUserId) ||
                   callActive
                 }
-                onOpenChats={() => {
-                  setActiveUserId("");
-                  setSidebarOpen(true);
-                }}
+                onOpenChats={onMobileOpenChats}
                 onRefreshDashboard={refreshLists}
                 onPresence={handlePresence}
                 getContactLabel={getContactLabel}
@@ -591,7 +620,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
           </div>
         </div>
       </div>
-      <BottomNav active={mainTab} onSelect={setMainTab} />
+      <BottomNav active={mainTab} onSelect={onMobileSelectTab} />
 
       {callRecoveryPrompt && (
         <div
@@ -627,7 +656,7 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
               <button
                 type="button"
                 className="callRecoverySecondary"
-                onClick={() => setCallRecoveryPrompt(null)}
+                onClick={onMobileDismissCallRecovery}
               >
                 Dismiss
               </button>
@@ -638,7 +667,9 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
 
       <ChatSettingsPanel
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={onMobileCloseSettings}
+        isMobile={isMobile}
+        settingsNestedBackRef={settingsNestedPopRef}
         currentUser={currentUser}
         token={token}
         onLogout={onLogout}

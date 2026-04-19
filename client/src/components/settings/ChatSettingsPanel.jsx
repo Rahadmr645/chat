@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { IconChevronLeft } from "../../assets/icons/chatIcons.jsx";
 import "../sidebar/Sidebar.css";
 import "./ChatSettingsPanel.css";
@@ -99,9 +99,18 @@ const Avatar = ({ userLike, className = "avatarStub", fallback = "U" }) => {
   return <div className={className}>{label}</div>;
 };
 
+const mergeHistoryState = (patch) => ({
+  ...(window.history.state && typeof window.history.state === "object"
+    ? window.history.state
+    : {}),
+  ...patch,
+});
+
 const ChatSettingsPanel = ({
   open,
   onClose,
+  isMobile = false,
+  settingsNestedBackRef = null,
   currentUser,
   token,
   onLogout,
@@ -150,15 +159,56 @@ const ChatSettingsPanel = ({
   }, [open]);
 
   useEffect(() => {
+    if (!settingsNestedBackRef) return;
+    if (!open) {
+      settingsNestedBackRef.current = () => false;
+      return;
+    }
+    settingsNestedBackRef.current = () => {
+      if (view !== VIEWS.HOME) {
+        setView(VIEWS.HOME);
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      settingsNestedBackRef.current = () => false;
+    };
+  }, [open, view, settingsNestedBackRef]);
+
+  const settingsSubPushedRef = useRef(false);
+  useEffect(() => {
+    if (!open || !isMobile) {
+      settingsSubPushedRef.current = false;
+      return;
+    }
+    if (view !== VIEWS.HOME && !settingsSubPushedRef.current) {
+      window.history.pushState(
+        mergeHistoryState({ rchatDashLayer: "settingsSub" }),
+        "",
+        window.location.href
+      );
+      settingsSubPushedRef.current = true;
+    }
+    if (view === VIEWS.HOME) {
+      settingsSubPushedRef.current = false;
+    }
+  }, [open, isMobile, view]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
       if (e.key !== "Escape") return;
+      if (isMobile && view !== VIEWS.HOME) {
+        window.history.back();
+        return;
+      }
       if (view === VIEWS.HOME) onClose();
       else setView(VIEWS.HOME);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, view]);
+  }, [open, onClose, view, isMobile]);
 
   const discoverUsers = useMemo(
     () => users.filter((u) => !u.isFriend && u.requestStatus !== "received"),
@@ -180,8 +230,20 @@ const ChatSettingsPanel = ({
   );
 
   const handleHeaderBack = () => {
+    if (isMobile && view !== VIEWS.HOME) {
+      window.history.back();
+      return;
+    }
     if (view === VIEWS.HOME) onClose();
     else setView(VIEWS.HOME);
+  };
+
+  const handleOverlayPointerDown = () => {
+    if (isMobile && view !== VIEWS.HOME) {
+      window.history.back();
+      return;
+    }
+    onClose();
   };
 
   const comingSoon = (label) => () => {
@@ -212,7 +274,7 @@ const ChatSettingsPanel = ({
       className="chatSettingsOverlay"
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleOverlayPointerDown();
       }}
     >
       <div
