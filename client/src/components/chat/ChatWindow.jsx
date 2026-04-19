@@ -279,6 +279,7 @@ const ChatWindow = ({
   /** Voice-call listen mode: earpiece (normal) vs loudspeaker — uses setSinkId when supported. */
   const [callVoiceOutputMode, setCallVoiceOutputMode] = useState("earpiece");
   const [callEndToast, setCallEndToast] = useState("");
+  const [callFullscreenChromeHidden, setCallFullscreenChromeHidden] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
   const [ctxReactionsExpanded, setCtxReactionsExpanded] = useState(false);
@@ -626,6 +627,7 @@ const ChatWindow = ({
     inCallMediaStatusEmittedRef.current = false;
     setCallChatOpen(false);
     setCallVoiceOutputMode("earpiece");
+    setCallFullscreenChromeHidden(false);
     setCallState({
       phase: "idle",
       peerId: "",
@@ -1047,6 +1049,10 @@ const ChatWindow = ({
 
   const swapCallViews = useCallback(() => {
     setIsLocalMain((prev) => !prev);
+  }, []);
+
+  const toggleFullscreenCallChrome = useCallback(() => {
+    setCallFullscreenChromeHidden((v) => !v);
   }, []);
 
   useEffect(() => {
@@ -2911,7 +2917,11 @@ const ChatWindow = ({
             <div
               className={`callCard${
                 isFullscreenVideo || isFullscreenAudio ? " callCard--fullscreen" : ""
-              }${isFullscreenAudio ? " callCard--audio" : ""}`}
+              }${isFullscreenAudio ? " callCard--audio" : ""}${
+                (isFullscreenVideo || isFullscreenAudio) && callFullscreenChromeHidden
+                  ? " callCard--chromeHidden"
+                  : ""
+              }`}
             >
               {isFullscreenVideo ? (
                 <>
@@ -2919,10 +2929,20 @@ const ChatWindow = ({
                     stream={mainStream}
                     className="callRemoteVideo callRemoteVideo--fullscreen"
                     muted={mainIsLocal}
-                    onClick={swapCallViews}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFullscreenCallChrome();
+                    }}
                   />
                   {!mainStream && (
-                    <div className="callRemotePlaceholder">
+                    <div
+                      className="callRemotePlaceholder"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFullscreenCallChrome();
+                      }}
+                      role="presentation"
+                    >
                       <div className="callRemoteAvatar" aria-hidden="true">
                         {(peerName || "?").charAt(0).toUpperCase()}
                       </div>
@@ -2931,7 +2951,14 @@ const ChatWindow = ({
                     </div>
                   )}
                   {mainIsLocal && isCameraOff && !isScreenSharing && (
-                    <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
+                    <div
+                      className="callRemotePlaceholder callRemotePlaceholder--overlay"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFullscreenCallChrome();
+                      }}
+                      role="presentation"
+                    >
                       <div className="callRemoteAvatar" aria-hidden="true">
                         <IconVideoOff />
                       </div>
@@ -2939,7 +2966,14 @@ const ChatWindow = ({
                     </div>
                   )}
                   {!mainIsLocal && peerCameraOff && !remoteShowsScreen && (
-                    <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
+                    <div
+                      className="callRemotePlaceholder callRemotePlaceholder--overlay"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFullscreenCallChrome();
+                      }}
+                      role="presentation"
+                    >
                       <div className="callRemoteAvatar" aria-hidden="true">
                         <IconVideoOff />
                       </div>
@@ -2977,14 +3011,19 @@ const ChatWindow = ({
                     className={`callLocalPip${isPipDragging ? " callLocalPip--dragging" : ""}`}
                     style={{ left: `${pipPos.x}px`, top: `${pipPos.y}px` }}
                     onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const pip = e.currentTarget;
+                      try {
+                        pip.setPointerCapture(e.pointerId);
+                      } catch {
+                        /* ignore */
+                      }
                       const startX = e.clientX;
                       const startY = e.clientY;
                       const origX = pipPos.x;
                       const origY = pipPos.y;
-                      const parent = e.currentTarget.parentElement;
-                      const pip = e.currentTarget;
+                      const parent = pip.parentElement;
                       const parentRect = parent?.getBoundingClientRect();
-                      const pipRect = pip.getBoundingClientRect();
                       let moved = false;
                       const onMove = (ev) => {
                         const dx = ev.clientX - startX;
@@ -2994,20 +3033,30 @@ const ChatWindow = ({
                           setIsPipDragging(true);
                         }
                         if (!parentRect) return;
-                        const maxX = Math.max(0, parentRect.width - pipRect.width);
-                        const maxY = Math.max(0, parentRect.height - pipRect.height);
+                        const pr = pip.getBoundingClientRect();
+                        const maxX = Math.max(0, parentRect.width - pr.width);
+                        const maxY = Math.max(0, parentRect.height - pr.height);
                         const nx = Math.min(Math.max(0, origX + dx), maxX);
                         const ny = Math.min(Math.max(0, origY + dy), maxY);
                         setPipPos({ x: nx, y: ny });
                       };
-                      const onUp = () => {
+                      const onUp = (ev) => {
                         window.removeEventListener("pointermove", onMove);
                         window.removeEventListener("pointerup", onUp);
+                        window.removeEventListener("pointercancel", onUp);
                         setIsPipDragging(false);
-                        if (!moved) swapCallViews();
+                        try {
+                          if (typeof pip.hasPointerCapture === "function" && pip.hasPointerCapture(ev.pointerId)) {
+                            pip.releasePointerCapture(ev.pointerId);
+                          }
+                        } catch {
+                          /* ignore */
+                        }
+                        if (!moved && ev.type !== "pointercancel") swapCallViews();
                       };
                       window.addEventListener("pointermove", onMove);
                       window.addEventListener("pointerup", onUp);
+                      window.addEventListener("pointercancel", onUp);
                     }}
                     role="button"
                     tabIndex={0}
@@ -3104,7 +3153,14 @@ const ChatWindow = ({
                 </>
               ) : isFullscreenAudio ? (
                 <>
-                  <div className="callAudioBg" aria-hidden="true">
+                  <div
+                    className="callAudioBg"
+                    aria-hidden="true"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFullscreenCallChrome();
+                    }}
+                  >
                     {peerAvatarUrl && (
                       <img
                         src={peerAvatarUrl}
@@ -3133,7 +3189,14 @@ const ChatWindow = ({
                     </p>
                   </div>
 
-                  <div className="callAudioCenter">
+                  <div
+                    className="callAudioCenter"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFullscreenCallChrome();
+                    }}
+                    role="presentation"
+                  >
                     <div className="callAudioAvatar">
                       {peerAvatarUrl ? (
                         <img

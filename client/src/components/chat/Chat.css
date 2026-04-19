@@ -1192,6 +1192,25 @@
   overflow: hidden;
 }
 
+.callCard--chromeHidden .callTopBar,
+.callCard--chromeHidden .callControlBar,
+.callCard--chromeHidden .callErr--floating {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.callCard--audio.callCard--chromeHidden .callAudioCenter {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.callCard--fullscreen .callTopBar,
+.callCard--fullscreen .callControlBar,
+.callCard--fullscreen .callErr--floating,
+.callCard--audio .callAudioCenter {
+  transition: opacity 0.22s ease;
+}
+
 .callRemoteVideo--fullscreen {
   position: absolute;
   inset: 0;
@@ -1245,11 +1264,14 @@
   color: #b9c7cf;
 }
 
+/* Self-view PiP: 9:16 portrait like IMO — fixed ratio, a bit taller than before */
 .callLocalPip {
   position: absolute;
-  width: 110px;
-  height: 150px;
-  border-radius: 14px;
+  width: clamp(118px, 30vw, 142px);
+  aspect-ratio: 9 / 16;
+  height: auto;
+  max-height: min(52vh, 320px);
+  border-radius: 18px;
   overflow: hidden;
   background: #f5d97a;
   border: 2px solid rgba(255, 255, 255, 0.85);
@@ -1259,6 +1281,7 @@
   touch-action: none;
   user-select: none;
   transition: box-shadow 0.15s ease, transform 0.15s ease;
+  box-sizing: border-box;
 }
 
 .callLocalPip:hover {
@@ -1313,10 +1336,12 @@
 }
 
 .callLocalVideo--pip {
-  position: static;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
   border: none;
   border-radius: 0;
 }
@@ -1596,6 +1621,7 @@
   inset: 0;
   overflow: hidden;
   z-index: 0;
+  cursor: pointer;
 }
 
 .callAudioBgImg {
