@@ -5,6 +5,7 @@ import WaRail from "../layout/WaRail.jsx";
 import BottomNav from "../bottomnav/BottomNav";
 import TabPlaceholder from "../tabs/TabPlaceholder";
 import CallsTab from "../calls/CallsTab.jsx";
+import StoriesTab from "../stories/StoriesTab.jsx";
 import Sidebar from "../sidebar/Sidebar";
 import ChatWindow from "../chat/ChatWindow";
 import ChatSettingsPanel from "../settings/ChatSettingsPanel.jsx";
@@ -123,6 +124,14 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
   const displayFriends = useMemo(
     () => friends.filter((u) => matchQuery(u, q)),
     [friends, q]
+  );
+
+  const resolveFriendPublicKey = useCallback(
+    (userId) => {
+      const f = friends.find((u) => String(u._id) === String(userId));
+      return f?.encryptionPublicKey || "";
+    },
+    [friends]
   );
 
   useEffect(() => {
@@ -443,6 +452,8 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                     setMainTab("chats");
                   }}
                 />
+              ) : mainTab === "updates" ? (
+                <StoriesTab token={token} currentUser={currentUser} />
               ) : (
                 <TabPlaceholder tab={mainTab} variant="solo" />
               )}
@@ -498,6 +509,8 @@ const DashboardInner = ({ currentUser, token, onLogout, onProfileUpdate }) => {
                 currentUser={currentUser}
                 selectedUser={activeUser}
                 token={token}
+                onProfileUpdate={onProfileUpdate}
+                resolveFriendPublicKey={resolveFriendPublicKey}
                 isMobile={isMobile}
                 pendingOutgoingCall={pendingOutgoingCall}
                 onPendingOutgoingCallConsumed={clearPendingOutgoingCall}

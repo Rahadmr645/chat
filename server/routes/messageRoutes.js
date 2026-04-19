@@ -9,6 +9,7 @@ import {
   sendMediaMessage,
   sendMessage,
   sendVoiceMessage,
+  setMessageReaction,
 } from "../controller/messageController.js";
 import { protect } from "../middleware/authMiddleware.js";
 
@@ -32,6 +33,7 @@ router.post("/send", sendMessage);
 router.get("/conversation/:otherUserId", getConversation);
 router.put("/conversation/:otherUserId/seen", markConversationSeen);
 router.put("/seen/:messageId", markAsSeen);
+router.put("/:messageId/reactions", setMessageReaction);
 router.delete("/:messageId", deleteMessage);
 
 export default router;

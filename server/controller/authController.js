@@ -18,6 +18,7 @@ const sanitizeUser = (user) => ({
   name: user.name,
   email: user.email,
   avatarUrl: user.avatarUrl || "",
+  encryptionPublicKey: user.encryptionPublicKey || "",
 });
 
 export const registerUser = async (req, res) => {
@@ -78,6 +79,39 @@ export const loginUser = async (req, res) => {
 
 export const getMe = async (req, res) => {
   return res.json({ user: sanitizeUser(req.user) });
+};
+
+const isValidP256PublicJwk = (raw) => {
+  if (!raw || typeof raw !== "string" || raw.length > 4096) return false;
+  let o;
+  try {
+    o = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!o || o.kty !== "EC" || o.crv !== "P-256" || typeof o.x !== "string" || typeof o.y !== "string") {
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "d")) return false;
+  return true;
+};
+
+/** Store only the peer's public ECDH key (JWK). Chat plaintext never touches this route. */
+export const updateEncryptionPublicKey = async (req, res) => {
+  try {
+    const { encryptionPublicKey } = req.body || {};
+    if (!isValidP256PublicJwk(encryptionPublicKey)) {
+      return res.status(400).json({ error: "Invalid encryption public key (expected P-256 JWK)" });
+    }
+    const updated = await User.findByIdAndUpdate(
+      req.user._id,
+      { encryptionPublicKey: encryptionPublicKey.trim() },
+      { new: true }
+    ).select("-password");
+    return res.json({ user: sanitizeUser(updated) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 };
 
 export const updateProfilePhoto = async (req, res) => {
@@ -174,7 +208,7 @@ export const getFriends = async (req, res) => {
   try {
     const currentFriends = req.user.friends ?? [];
     const friends = await User.find({ _id: { $in: currentFriends } })
-      .select("name email lastSeenAt avatarUrl")
+      .select("name email lastSeenAt avatarUrl encryptionPublicKey")
       .sort({ name: 1 });
 
     return res.json({

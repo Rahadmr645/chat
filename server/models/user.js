@@ -58,6 +58,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    /** Public half of P-256 ECDH key (JWK JSON string). Private key never stored server-side. */
+    encryptionPublicKey: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );

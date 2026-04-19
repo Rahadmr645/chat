@@ -22,6 +22,15 @@ const messageSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    /** Base64 AES-GCM IV (12 bytes) when text is end-to-end ciphertext. */
+    textCipherIv: {
+      type: String,
+      default: "",
+    },
+    textE2ee: {
+      type: Boolean,
+      default: false,
+    },
     durationSec: {
       type: Number,
       default: 0,
@@ -79,6 +88,16 @@ const messageSchema = new mongoose.Schema(
     deletedForEveryone: {
       type: Boolean,
       default: false,
+    },
+    /** One reaction per user: { userId, emoji } */
+    reactions: {
+      type: [
+        {
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+          emoji: { type: String, required: true, maxlength: 24 },
+        },
+      ],
+      default: [],
     },
   },
   { timestamps: true }

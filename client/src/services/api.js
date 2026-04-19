@@ -112,10 +112,14 @@ export const apiUploadMediaMessage = async ({
   receiverId,
   file,
   text = "",
+  textCipherIv = "",
 }) => {
   const formData = new FormData();
   formData.append("receiverId", String(receiverId));
   formData.append("text", String(text || ""));
+  if (textCipherIv) {
+    formData.append("textCipherIv", String(textCipherIv));
+  }
   formData.append("media", file, file.name || "media");
 
   const response = await fetch(joinApiUrl("/api/messages/media"), {
@@ -132,3 +136,41 @@ export const apiUploadMediaMessage = async ({
   }
   return data;
 };
+
+export const apiListStories = async ({ token }) =>
+  apiRequest({ method: "GET", path: "/api/stories", token });
+
+export const apiUploadStory = async ({ token, text = "", file }) => {
+  const formData = new FormData();
+  formData.append("text", String(text || ""));
+  if (file) {
+    formData.append("media", file, file.name || "media");
+  }
+  const response = await fetch(joinApiUrl("/api/stories"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Story upload failed");
+  }
+  return data;
+};
+
+export const apiStoryReaction = async ({ token, storyId, emoji }) =>
+  apiRequest({
+    method: "PUT",
+    path: `/api/stories/${storyId}/reactions`,
+    token,
+    body: { emoji },
+  });
+
+export const apiDeleteStory = async ({ token, storyId }) =>
+  apiRequest({
+    method: "DELETE",
+    path: `/api/stories/${storyId}`,
+    token,
+  });

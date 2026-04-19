@@ -149,6 +149,68 @@
   align-items: stretch;
 }
 
+.messageReactionStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: -2px;
+  margin-bottom: 2px;
+  z-index: 2;
+}
+
+.messageReactionStrip--sent {
+  justify-content: flex-end;
+}
+
+.messageReactionStrip--received {
+  justify-content: flex-start;
+}
+
+.messageReactionChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px 2px 5px;
+  border-radius: 999px;
+  border: 1px solid #2a3942;
+  background: #1e2a30;
+  font-size: 15px;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #e9edef;
+}
+
+.messageReactionChip:hover,
+.messageReactionChip:focus-visible {
+  background: #26353d;
+  outline: none;
+}
+
+.messageReactionChip--mine {
+  border-color: #00a884;
+  background: rgba(0, 168, 132, 0.14);
+}
+
+.messageReactionChipEmoji {
+  line-height: 1;
+}
+
+.messageReactionChipCount {
+  font-size: 11px;
+  color: #8696a0;
+  font-weight: 600;
+  min-width: 1ch;
+}
+
+.messageCtxReactions--extra {
+  border-radius: 14px;
+}
+
+.messageCtxReactionBtn--moreOn {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e9edef;
+}
+
 /* WhatsApp-style message context: reaction strip + icon menu beside the bubble */
 .messageCtxPopover {
   position: absolute;
@@ -1310,6 +1372,25 @@
 }
 
 .callPeerCamBadge svg {
+  width: 12px;
+  height: 12px;
+}
+
+.callPeerScreenBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(0, 168, 132, 0.35);
+  color: #e9edef;
+  vertical-align: middle;
+  pointer-events: auto;
+}
+
+.callPeerScreenBadge svg {
   width: 12px;
   height: 12px;
 }

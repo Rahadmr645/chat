@@ -8,6 +8,7 @@ import {
   emitCallIceCandidate,
   emitCallMuteStatus,
   emitCallOffer,
+  emitCallRenegotiate,
   emitCallReject,
   emitStopTyping,
   emitTyping,
@@ -18,9 +19,11 @@ import {
   subscribeCallIceCandidate,
   subscribeCallMuteStatus,
   subscribeCallRejected,
+  subscribeCallRenegotiate,
   subscribeCallUnavailable,
   subscribeIncomingCall,
   subscribeIncomingMessages,
+  subscribeMessageReaction,
   subscribeMessageRevoked,
   subscribeMessagesSeen,
   subscribePresence,
@@ -28,6 +31,11 @@ import {
   subscribeVoiceRecordingStatus,
 } from "../../socket/Socket.js";
 import { apiRequest, apiUploadMediaMessage, apiUploadVoice } from "../../services/api.js";
+import {
+  decryptConversationText,
+  encryptTextForPeer,
+  ensureDeviceKeys,
+} from "../../crypto/e2eeText.js";
 import { persistCallLog } from "../../services/callLogApi.js";
 import {
   formatLastSeen,
@@ -35,6 +43,7 @@ import {
   formatRecordingClock,
 } from "../../utils/chatFormat.js";
 import { isMessageInThread } from "../../utils/chatThread.js";
+import { aggregateReactions } from "../../utils/messageReactions.js";
 import { socketEntityId } from "../../utils/socketEntityId.js";
 import {
   getPreferredVoiceMimeType,
@@ -55,6 +64,7 @@ import {
   IconMsgStar,
   IconSearch,
   IconPhoneHandset,
+  IconScreenShare,
   IconSend,
   IconSpeakerLoud,
   IconSwitchCamera,
@@ -71,9 +81,54 @@ const TYPING_STOP_MS = 2000;
 const MARK_READ_DEBOUNCE_MS = 400;
 const MESSAGE_LONG_PRESS_MS = 520;
 const MESSAGE_CTX_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const MESSAGE_CTX_EXTRA_REACTIONS = ["🎉", "🔥", "💯", "👎", "✨", "🙌", "😭", "🤝"];
 const DEFAULT_RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
+
+/** Match rear / wide / world cameras across OEM label strings (labels exist after first capture). */
+const REAR_CAMERA_LABEL =
+  /back|rear|wide|environment|world|camera\s*0|camera2|后置|traseira|عقب/i;
+const FRONT_CAMERA_LABEL = /front|user|face|selfie|facetime|前置|前置摄像头/i;
+
+function disposeMediaTracks(tracks) {
+  for (const t of tracks) {
+    try {
+      t.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function pickVideoDeviceIdForFacing(facing) {
+  if (!navigator.mediaDevices?.enumerateDevices) return null;
+  try {
+    const list = (await navigator.mediaDevices.enumerateDevices()).filter(
+      (d) => d.kind === "videoinput" && d.deviceId
+    );
+    if (!list.length) return null;
+    const L = (d) => String(d.label || "").toLowerCase();
+    if (facing === "environment") {
+      const rear = list.find((d) => REAR_CAMERA_LABEL.test(L(d)));
+      if (rear) return rear.deviceId;
+      const notFront = list.find((d) => !FRONT_CAMERA_LABEL.test(L(d)));
+      if (notFront) return notFront.deviceId;
+      if (list.length >= 2) return list[list.length - 1].deviceId;
+      return null;
+    }
+    const front = list.find((d) => FRONT_CAMERA_LABEL.test(L(d)));
+    if (front) return front.deviceId;
+    return list[0].deviceId;
+  } catch {
+    return null;
+  }
+}
+
+/** Many phones only allow one camera open at a time; yield so the OS can release the sensor. */
+function releaseCameraSlotMs() {
+  return new Promise((r) => setTimeout(r, 80));
+}
 
 /** Call timer isolated so the rest of the call UI does not re-render every second. */
 function CallDurationClock({ startedAt }) {
@@ -182,8 +237,11 @@ const ChatWindow = ({
   onIncomingCall,
   onCallPhaseChange,
   onRefreshDashboard,
+  onProfileUpdate,
+  resolveFriendPublicKey,
 }) => {
   const [messages, setMessages] = useState([]);
+  const [e2eeDecrypted, setE2eeDecrypted] = useState({});
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -219,7 +277,9 @@ const ChatWindow = ({
   const [callChatOpen, setCallChatOpen] = useState(false);
   /** Voice-call listen mode: earpiece (normal) vs loudspeaker — uses setSinkId when supported. */
   const [callVoiceOutputMode, setCallVoiceOutputMode] = useState("earpiece");
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = useState(null);
+  const [ctxReactionsExpanded, setCtxReactionsExpanded] = useState(false);
   const messageLongPressRef = useRef({ timer: null, startX: 0, startY: 0 });
   const [recordingTick, setRecordingTick] = useState(0);
   const [, setLastSeenTick] = useState(0);
@@ -241,6 +301,11 @@ const ChatWindow = ({
   const reacquireCameraInFlightRef = useRef(false);
   const visibilityReacquireTimerRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
+  const isScreenSharingRef = useRef(false);
+  const screenStreamRef = useRef(null);
+  const savedCameraVideoTrackRef = useRef(null);
+  /** "replace" = swapped camera video; "add" = added video on voice-only call */
+  const screenShareModeRef = useRef(null);
   const disconnectCleanupTimerRef = useRef(null);
   const callStateRef = useRef(callState);
   const incomingCallRef = useRef(incomingCall);
@@ -267,9 +332,69 @@ const ChatWindow = ({
   onCallPhaseChangeRef.current = onCallPhaseChange;
   const onRefreshDashboardRef = useRef(onRefreshDashboard);
   onRefreshDashboardRef.current = onRefreshDashboard;
+  const resolveFriendPublicKeyRef = useRef(resolveFriendPublicKey);
+  resolveFriendPublicKeyRef.current = resolveFriendPublicKey;
   const { notifyIncomingMessage } = useNotifications();
   const notifyIncomingMessageRef = useRef(notifyIncomingMessage);
   notifyIncomingMessageRef.current = notifyIncomingMessage;
+
+  const syncMyE2eePublicKey = useCallback(async () => {
+    if (!token || !currentUser?._id || !globalThis.crypto?.subtle) return;
+    const { publicJwkString } = await ensureDeviceKeys(currentUser._id);
+    const server = String(currentUser.encryptionPublicKey || "").trim();
+    if (publicJwkString === server) return;
+    const data = await apiRequest({
+      method: "PATCH",
+      path: "/api/auth/profile/encryption-public-key",
+      token,
+      body: { encryptionPublicKey: publicJwkString },
+    });
+    onProfileUpdate?.(data.user);
+  }, [token, currentUser?._id, currentUser?.encryptionPublicKey, onProfileUpdate]);
+
+  useEffect(() => {
+    void syncMyE2eePublicKey();
+  }, [syncMyE2eePublicKey]);
+
+  useEffect(() => {
+    const peerKey =
+      selectedUser?.encryptionPublicKey ||
+      (selectedUserId ? resolveFriendPublicKeyRef.current?.(String(selectedUserId)) : "");
+    if (!currentUser?._id || !String(peerKey || "").trim()) {
+      setE2eeDecrypted({});
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const next = {};
+      for (const m of messages) {
+        if (m.deletedForEveryone || !m.textE2ee || !m.textCipherIv) continue;
+        const kind = m.kind || "text";
+        if (!["text", "image", "video", "audio", "file"].includes(kind)) continue;
+        const id = String(m._id);
+        try {
+          next[id] = await decryptConversationText({
+            userId: currentUser._id,
+            peerPublicJwk: String(peerKey),
+            ciphertextB64: m.text,
+            ivB64: m.textCipherIv,
+          });
+        } catch {
+          next[id] = "[Could not decrypt]";
+        }
+      }
+      if (!cancelled) setE2eeDecrypted(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    messages,
+    selectedUserId,
+    currentUser?._id,
+    selectedUser?.encryptionPublicKey,
+    resolveFriendPublicKey,
+  ]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -442,6 +567,10 @@ const ChatWindow = ({
     cameraFacingRef.current = cameraFacing;
   }, [cameraFacing]);
 
+  useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
+
   const cleanupCall = useCallback(() => {
     clearTimeout(disconnectCleanupTimerRef.current);
     disconnectCleanupTimerRef.current = null;
@@ -450,6 +579,22 @@ const ChatWindow = ({
       visibilityReacquireTimerRef.current = null;
     }
     reacquireCameraInFlightRef.current = false;
+    isScreenSharingRef.current = false;
+    setIsScreenSharing(false);
+    savedCameraVideoTrackRef.current = null;
+    screenShareModeRef.current = null;
+    try {
+      screenStreamRef.current?.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+    screenStreamRef.current = null;
     try {
       pcRef.current?.close();
     } catch {
@@ -520,7 +665,19 @@ const ChatWindow = ({
     emitCallMediaStatusToPeer();
   }, [isMicMuted, emitCallMediaStatusToPeer]);
 
-  const acquireVideoTrack = useCallback(async (facing) => {
+  const acquireVideoTrack = useCallback(async (facing, options = {}) => {
+    const allowGenericFallback =
+      options.allowGenericFallback !== undefined
+        ? options.allowGenericFallback
+        : facing === "user";
+
+    let deviceId = null;
+    try {
+      deviceId = await pickVideoDeviceIdForFacing(facing);
+    } catch {
+      deviceId = null;
+    }
+
     const attempts = [
       { audio: false, video: { facingMode: { exact: facing } } },
       { audio: false, video: { facingMode: facing } },
@@ -533,13 +690,31 @@ const ChatWindow = ({
           height: { ideal: 720 },
         },
       },
-      { audio: false, video: true },
     ];
+    if (deviceId) {
+      attempts.push(
+        { audio: false, video: { deviceId: { exact: deviceId } } },
+        { audio: false, video: { deviceId: { ideal: deviceId } } }
+      );
+    }
+    if (allowGenericFallback) {
+      attempts.push({ audio: false, video: true });
+    }
     for (const constraints of attempts) {
       try {
         const s = await navigator.mediaDevices.getUserMedia(constraints);
         const t = s.getVideoTracks()[0];
-        if (t) return t;
+        if (!t) {
+          s.getTracks().forEach((x) => {
+            try {
+              x.stop();
+            } catch {
+              /* ignore */
+            }
+          });
+          continue;
+        }
+        return t;
       } catch {
         /* try next */
       }
@@ -548,6 +723,10 @@ const ChatWindow = ({
   }, []);
 
   const toggleCameraOff = useCallback(async () => {
+    if (isScreenSharingRef.current) {
+      setCallError("Stop screen sharing before changing the camera.");
+      return;
+    }
     const stream = localCallStreamRef.current;
     if (!stream) return;
     const next = !isCameraOff;
@@ -562,30 +741,35 @@ const ChatWindow = ({
         } else {
           try {
             const pc = pcRef.current;
-            const newTrack = await acquireVideoTrack(cameraFacingRef.current);
-            if (!newTrack) return;
-            if (!localCallStreamRef.current || !pcRef.current) {
-              newTrack.stop();
-              return;
-            }
-            const oldTracks = [...stream.getVideoTracks()];
+            const oldV = [...stream.getVideoTracks()];
             const sender = pc
               ?.getSenders()
               .find((s) => s.track && s.track.kind === "video");
-            if (sender) await sender.replaceTrack(newTrack);
-            for (const t of oldTracks) {
-              if (t === newTrack) continue;
+            if (sender) {
+              try {
+                await sender.replaceTrack(null);
+              } catch {
+                /* ignore */
+              }
+            }
+            for (const t of oldV) {
               try {
                 stream.removeTrack(t);
               } catch {
                 /* ignore */
               }
-              try {
-                t.stop();
-              } catch {
-                /* ignore */
-              }
             }
+            disposeMediaTracks(oldV);
+            await releaseCameraSlotMs();
+            const newTrack = await acquireVideoTrack(cameraFacingRef.current, {
+              allowGenericFallback: cameraFacingRef.current === "user",
+            });
+            if (!newTrack) return;
+            if (!localCallStreamRef.current || !pcRef.current) {
+              newTrack.stop();
+              return;
+            }
+            if (sender) await sender.replaceTrack(newTrack);
             if (!stream.getVideoTracks().includes(newTrack)) {
               stream.addTrack(newTrack);
             }
@@ -650,11 +834,31 @@ const ChatWindow = ({
         durationSec,
       };
       try {
+        let body = { receiverId: String(receiverId), text };
+        const peerPk = resolveFriendPublicKeyRef.current?.(String(receiverId));
+        if (peerPk?.trim() && currentUser?._id && globalThis.crypto?.subtle) {
+          try {
+            await ensureDeviceKeys(currentUser._id);
+            await syncMyE2eePublicKey();
+            const enc = await encryptTextForPeer({
+              userId: currentUser._id,
+              peerPublicJwk: peerPk,
+              plaintext: text,
+            });
+            body = {
+              receiverId: String(receiverId),
+              text: enc.ciphertextB64,
+              textCipherIv: enc.ivB64,
+            };
+          } catch {
+            /* fall back to plaintext summary if crypto fails */
+          }
+        }
         const saved = await apiRequest({
           method: "POST",
           path: "/api/messages/send",
           token,
-          body: { receiverId: String(receiverId), text },
+          body,
         });
         setMessages((prev) => [...prev, saved]);
       } catch {
@@ -663,41 +867,48 @@ const ChatWindow = ({
       if (outcome) void persistCallLog(logPayload);
       onRefreshDashboardRef.current?.();
     },
-    [token]
+    [token, syncMyE2eePublicKey, currentUser?._id]
   );
 
   const switchCamera = useCallback(async () => {
+    if (isScreenSharingRef.current) return;
     const pc = pcRef.current;
     const stream = localCallStreamRef.current;
     if (!pc || !stream) return;
     const prevFacing = cameraFacingRef.current;
     const nextFacing = prevFacing === "user" ? "environment" : "user";
+    const sender = pc
+      .getSenders()
+      .find((s) => s.track && s.track.kind === "video");
+    const oldVideoTracks = [...stream.getVideoTracks()];
 
     try {
-      const newVideoTrack = await acquireVideoTrack(nextFacing);
-      if (!newVideoTrack) throw new Error("No camera available.");
-      if (!localCallStreamRef.current || !pcRef.current) {
-        newVideoTrack.stop();
-        return;
+      if (sender) {
+        try {
+          await sender.replaceTrack(null);
+        } catch {
+          /* ignore */
+        }
       }
-      const oldVideoTracks = [...stream.getVideoTracks()];
-      const sender = pc
-        .getSenders()
-        .find((s) => s.track && s.track.kind === "video");
-      if (sender) await sender.replaceTrack(newVideoTrack);
       for (const t of oldVideoTracks) {
-        if (t === newVideoTrack) continue;
         try {
           stream.removeTrack(t);
         } catch {
           /* ignore */
         }
-        try {
-          t.stop();
-        } catch {
-          /* ignore */
-        }
       }
+      disposeMediaTracks(oldVideoTracks);
+      await releaseCameraSlotMs();
+
+      const newVideoTrack = await acquireVideoTrack(nextFacing, {
+        allowGenericFallback: nextFacing === "user",
+      });
+      if (!newVideoTrack) throw new Error("No camera available.");
+      if (!localCallStreamRef.current || !pcRef.current) {
+        newVideoTrack.stop();
+        return;
+      }
+      if (sender) await sender.replaceTrack(newVideoTrack);
       if (!stream.getVideoTracks().includes(newVideoTrack)) {
         stream.addTrack(newVideoTrack);
       }
@@ -708,7 +919,9 @@ const ChatWindow = ({
       setCallError("");
     } catch (err) {
       try {
-        const fallback = await acquireVideoTrack(prevFacing);
+        const fallback = await acquireVideoTrack(prevFacing, {
+          allowGenericFallback: true,
+        });
         if (fallback && localCallStreamRef.current && pcRef.current) {
           const oldAfterFail = [...stream.getVideoTracks()];
           const sender = pc
@@ -749,11 +962,35 @@ const ChatWindow = ({
     const stream = localCallStreamRef.current;
     if (!pc || !stream) return;
     if (!callStateRef.current?.isVideo) return;
+    if (isScreenSharingRef.current) return;
     if (isCameraOffRef.current) return;
     if (reacquireCameraInFlightRef.current) return;
     reacquireCameraInFlightRef.current = true;
     try {
-      const newTrack = await acquireVideoTrack(cameraFacingRef.current);
+      const oldTracks = [...stream.getVideoTracks()];
+      const sender = pc
+        .getSenders()
+        .find((s) => s.track && s.track.kind === "video");
+      if (sender) {
+        try {
+          await sender.replaceTrack(null);
+        } catch {
+          /* ignore */
+        }
+      }
+      for (const t of oldTracks) {
+        try {
+          stream.removeTrack(t);
+        } catch {
+          /* ignore */
+        }
+      }
+      disposeMediaTracks(oldTracks);
+      await releaseCameraSlotMs();
+
+      const newTrack = await acquireVideoTrack(cameraFacingRef.current, {
+        allowGenericFallback: cameraFacingRef.current === "user",
+      });
       if (!newTrack) return;
       if (!localCallStreamRef.current || !pcRef.current) {
         newTrack.stop();
@@ -763,25 +1000,8 @@ const ChatWindow = ({
         newTrack.stop();
         return;
       }
-      const oldTracks = [...stream.getVideoTracks()];
-      const sender = pc
-        .getSenders()
-        .find((s) => s.track && s.track.kind === "video");
       if (sender) {
         await sender.replaceTrack(newTrack);
-      }
-      for (const t of oldTracks) {
-        if (t === newTrack) continue;
-        try {
-          stream.removeTrack(t);
-        } catch {
-          /* ignore */
-        }
-        try {
-          t.stop();
-        } catch {
-          /* ignore */
-        }
       }
       if (!stream.getVideoTracks().includes(newTrack)) {
         stream.addTrack(newTrack);
@@ -817,10 +1037,11 @@ const ChatWindow = ({
   }, [callState.phase, callState.isVideo, emitCallMediaStatusToPeer]);
 
   useEffect(() => {
-    if (!localCallStream || !callState.isVideo || isCameraOff) return undefined;
+    if (!localCallStream || !callState.isVideo || isCameraOff || isScreenSharing) return undefined;
     const videoTrack = localCallStream.getVideoTracks()[0];
     if (!videoTrack) return undefined;
     const handleEnded = () => {
+      if (isScreenSharingRef.current) return;
       void reacquireCamera();
     };
     const scheduleVisibilityCheck = () => {
@@ -830,7 +1051,9 @@ const ChatWindow = ({
       }
       visibilityReacquireTimerRef.current = setTimeout(() => {
         visibilityReacquireTimerRef.current = null;
-        if (!callStateRef.current?.isVideo || isCameraOffRef.current) return;
+        if (!callStateRef.current?.isVideo || isCameraOffRef.current || isScreenSharingRef.current) {
+          return;
+        }
         const t = localCallStreamRef.current?.getVideoTracks()[0];
         if (!t || t.readyState !== "live") {
           void reacquireCamera();
@@ -847,7 +1070,7 @@ const ChatWindow = ({
         visibilityReacquireTimerRef.current = null;
       }
     };
-  }, [localCallStream, callState.isVideo, isCameraOff, reacquireCamera]);
+  }, [localCallStream, callState.isVideo, isCameraOff, isScreenSharing, reacquireCamera]);
 
   const addPendingIceCandidates = useCallback(async () => {
     const pc = pcRef.current;
@@ -875,8 +1098,23 @@ const ChatWindow = ({
         });
       };
       pc.ontrack = (event) => {
-        const [stream] = event.streams || [];
-        if (stream) setRemoteCallStream(stream);
+        const incoming = event.streams?.[0];
+        if (!incoming) return;
+        setRemoteCallStream((prev) => {
+          const next = new MediaStream();
+          const seen = new Set();
+          const addFrom = (s) => {
+            s.getTracks().forEach((t) => {
+              if (!seen.has(t.id)) {
+                next.addTrack(t);
+                seen.add(t.id);
+              }
+            });
+          };
+          if (prev) addFrom(prev);
+          addFrom(incoming);
+          return next;
+        });
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") {
@@ -901,6 +1139,140 @@ const ChatWindow = ({
     },
     [cleanupCall]
   );
+
+  const stopScreenShare = useCallback(async () => {
+    if (!isScreenSharingRef.current) return;
+    isScreenSharingRef.current = false;
+    setIsScreenSharing(false);
+
+    const pc = pcRef.current;
+    const me = String(currentUserIdRef.current || "");
+    const peerId = String(callStateRef.current?.peerId || "");
+    const mode = screenShareModeRef.current;
+    screenShareModeRef.current = null;
+
+    const screen = screenStreamRef.current;
+    if (screen) {
+      screen.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+      screenStreamRef.current = null;
+    }
+
+    const savedCam = savedCameraVideoTrackRef.current;
+    savedCameraVideoTrackRef.current = null;
+    const videoSender = pc?.getSenders().find((s) => s.track?.kind === "video");
+
+    try {
+      if (mode === "replace" && videoSender) {
+        await videoSender.replaceTrack(savedCam ?? null);
+        setLocalCallStream((prev) => {
+          const next = new MediaStream();
+          prev?.getAudioTracks().forEach((t) => next.addTrack(t));
+          if (savedCam) next.addTrack(savedCam);
+          return next;
+        });
+        return;
+      }
+      if (mode === "add" && videoSender && pc) {
+        try {
+          pc.removeTrack(videoSender);
+        } catch {
+          /* ignore */
+        }
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (me && peerId) {
+          emitCallRenegotiate({
+            senderId: me,
+            receiverId: peerId,
+            description: { type: offer.type, sdp: offer.sdp },
+          });
+        }
+        setLocalCallStream((prev) => {
+          const next = new MediaStream();
+          prev?.getAudioTracks().forEach((t) => next.addTrack(t));
+          return next;
+        });
+      }
+    } catch (err) {
+      setCallError(err?.message || "Could not stop screen share.");
+    }
+  }, []);
+
+  const toggleScreenShare = useCallback(async () => {
+    const pc = pcRef.current;
+    const me = String(currentUserIdRef.current || "");
+    const peerId = String(callStateRef.current?.peerId || "");
+    const phase = callStateRef.current?.phase;
+    if (!pc || !me || !peerId || phase !== "in-call") return;
+
+    if (isScreenSharingRef.current) {
+      await stopScreenShare();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setCallError("Screen sharing is not supported in this browser.");
+      return;
+    }
+
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { max: 30 } },
+        audio: false,
+      });
+      const screenTrack = screenStream.getVideoTracks()[0];
+      if (!screenTrack) {
+        screenStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      screenStreamRef.current = screenStream;
+      screenTrack.onended = () => {
+        void stopScreenShare();
+      };
+
+      const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
+      if (videoSender) {
+        savedCameraVideoTrackRef.current = videoSender.track ?? null;
+        await videoSender.replaceTrack(screenTrack);
+        screenShareModeRef.current = "replace";
+      } else {
+        savedCameraVideoTrackRef.current = null;
+        pc.addTrack(screenTrack, screenStream);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        screenShareModeRef.current = "add";
+        emitCallRenegotiate({
+          senderId: me,
+          receiverId: peerId,
+          description: { type: offer.type, sdp: offer.sdp },
+        });
+      }
+
+      setLocalCallStream((prev) => {
+        const next = new MediaStream();
+        prev?.getAudioTracks().forEach((t) => next.addTrack(t));
+        next.addTrack(screenTrack);
+        return next;
+      });
+
+      isScreenSharingRef.current = true;
+      setIsScreenSharing(true);
+      setCallError("");
+    } catch (err) {
+      const name = String(err?.name || "");
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setCallError("Screen share permission denied.");
+      } else if (name !== "AbortError") {
+        setCallError(err?.message || "Could not share screen.");
+      }
+    }
+  }, [stopScreenShare]);
 
   const endCall = useCallback(() => {
     const me = currentUserIdRef.current;
@@ -1166,6 +1538,19 @@ const ChatWindow = ({
       );
     });
 
+    const unsubReaction = subscribeMessageReaction(({ message }) => {
+      if (!message?._id) return;
+      const me = String(currentUserIdRef.current || "");
+      const peer = String(selectedUserIdRef.current || "");
+      if (!peer) return;
+      if (!isMessageInThread(message, peer, me)) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m._id) === String(message._id) ? { ...m, ...message } : m
+        )
+      );
+    });
+
     const unsubPresence = subscribePresence((payload) => {
       onPresenceRef.current?.(payload);
     });
@@ -1210,6 +1595,29 @@ const ChatWindow = ({
       } catch {
         setCallError("Call answer failed.");
         cleanupCall();
+      }
+    });
+
+    const unsubRenegotiate = subscribeCallRenegotiate(async (payload) => {
+      const me = String(currentUserIdRef.current || "");
+      if (!payload?.senderId || String(payload.receiverId) !== me) return;
+      const pc = pcRef.current;
+      if (!pc || !payload.description?.sdp || !payload.description?.type) return;
+      try {
+        const desc = new RTCSessionDescription(payload.description);
+        await pc.setRemoteDescription(desc);
+        if (desc.type === "offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          emitCallRenegotiate({
+            senderId: me,
+            receiverId: String(payload.senderId),
+            description: { type: answer.type, sdp: answer.sdp },
+          });
+        }
+        await addPendingIceCandidates();
+      } catch (e) {
+        console.warn("callRenegotiate failed:", e);
       }
     });
 
@@ -1316,9 +1724,11 @@ const ChatWindow = ({
       unsubVoiceRec();
       unsubSeen();
       unsubRevoked();
+      unsubReaction();
       unsubPresence();
       unsubIncomingCall();
       unsubCallAnswered();
+      unsubRenegotiate();
       unsubCallIce();
       unsubCallRejected();
       unsubCallEnded();
@@ -1586,11 +1996,29 @@ const ChatWindow = ({
     setError("");
     setMediaSending(true);
     try {
+      let textOut = String(pendingCaption || "").trim();
+      let textCipherIv = "";
+      const peerPk =
+        selectedUser?.encryptionPublicKey ||
+        resolveFriendPublicKeyRef.current?.(String(selectedUserId)) ||
+        "";
+      if (textOut && peerPk?.trim() && currentUser?._id && globalThis.crypto?.subtle) {
+        await ensureDeviceKeys(currentUser._id);
+        await syncMyE2eePublicKey();
+        const enc = await encryptTextForPeer({
+          userId: currentUser._id,
+          peerPublicJwk: String(peerPk),
+          plaintext: textOut,
+        });
+        textOut = enc.ciphertextB64;
+        textCipherIv = enc.ivB64;
+      }
       const savedMessage = await apiUploadMediaMessage({
         token,
         receiverId: selectedUserId,
         file: pendingAttachment.file,
-        text: pendingCaption,
+        text: textOut,
+        textCipherIv,
       });
       setMessages((prev) => [...prev, savedMessage]);
       closeAttachmentComposer();
@@ -1636,19 +2064,44 @@ const ChatWindow = ({
     emitStopTyping(me, peer);
     clearTimeout(typingStopTimerRef.current);
 
+    const peerPk =
+      selectedUser?.encryptionPublicKey ||
+      resolveFriendPublicKeyRef.current?.(String(selectedUserId)) ||
+      "";
+    if (!peerPk?.trim()) {
+      setError(
+        "This contact has not registered encryption yet. Ask them to open the app once you are friends."
+      );
+      return;
+    }
+    if (!globalThis.crypto?.subtle) {
+      setError("This browser cannot use end-to-end encryption.");
+      return;
+    }
+
     try {
-      const payload = { receiverId: selectedUserId, text: text.trim() };
+      await ensureDeviceKeys(currentUser._id);
+      await syncMyE2eePublicKey();
+      const enc = await encryptTextForPeer({
+        userId: currentUser._id,
+        peerPublicJwk: String(peerPk),
+        plaintext: text.trim(),
+      });
       const savedMessage = await apiRequest({
         method: "POST",
         path: "/api/messages/send",
         token,
-        body: payload,
+        body: {
+          receiverId: selectedUserId,
+          text: enc.ciphertextB64,
+          textCipherIv: enc.ivB64,
+        },
       });
 
       setMessages((prev) => [...prev, savedMessage]);
       setText("");
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Could not send message.");
     }
   };
 
@@ -1679,8 +2132,30 @@ const ChatWindow = ({
     [token]
   );
 
+  const handleToggleReaction = useCallback(
+    async (messageId, emoji) => {
+      if (!token || !messageId || !emoji) return;
+      try {
+        const updated = await apiRequest({
+          method: "PUT",
+          path: `/api/messages/${messageId}/reactions`,
+          token,
+          body: { emoji },
+        });
+        setMessages((prev) =>
+          prev.map((m) => (String(m._id) === String(messageId) ? { ...m, ...updated } : m))
+        );
+        setOpenMessageMenuId(null);
+        setCtxReactionsExpanded(false);
+      } catch (err) {
+        setError(err.message || "Could not update reaction.");
+      }
+    },
+    [token]
+  );
+
   const handleCopyMessageText = useCallback(async (message) => {
-    const text = String(message?.text ?? "").trim();
+    const text = String(message?.displayText ?? message?.text ?? "").trim();
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -1746,12 +2221,34 @@ const ChatWindow = ({
 
   const normalizedMessages = useMemo(
     () =>
-      messages.map((message) => ({
-        ...message,
-        senderId: String(message.senderId),
-      })),
-    [messages]
+      messages.map((message) => {
+        const id = String(message._id);
+        const base = {
+          ...message,
+          senderId: String(message.senderId),
+          reactions: message.reactions ?? [],
+        };
+        const kind = message.kind || "text";
+        if (
+          message.textE2ee &&
+          message.textCipherIv &&
+          !message.deletedForEveryone &&
+          ["text", "image", "video", "audio", "file"].includes(kind)
+        ) {
+          const d = e2eeDecrypted[id];
+          return {
+            ...base,
+            displayText: d !== undefined ? d : "…",
+          };
+        }
+        return { ...base, displayText: message.text ?? "" };
+      }),
+    [messages, e2eeDecrypted]
   );
+
+  useEffect(() => {
+    setCtxReactionsExpanded(false);
+  }, [openMessageMenuId]);
 
   useEffect(() => {
     if (openMessageMenuId == null) return undefined;
@@ -1897,12 +2394,15 @@ const ChatWindow = ({
             !isVideo &&
             !isAudioFile &&
             !isFile &&
-            msg.text
-              ? /^(📹|📞)\s+(.+)$/.exec(msg.text.trim())
+            msg.displayText
+              ? /^(📹|📞)\s+(.+)$/.exec(String(msg.displayText).trim())
               : null;
           const isCallSummary = Boolean(callMatch);
           const canCopyText =
-            !isRevoked && Boolean(String(msg.text ?? "").trim());
+            !isRevoked && Boolean(String(msg.displayText ?? "").trim());
+          const reactionChips = !isRevoked
+            ? aggregateReactions(msg.reactions, currentUser._id)
+            : [];
           return (
             <div
               key={msg._id}
@@ -1946,7 +2446,9 @@ const ChatWindow = ({
                   ) : isImage ? (
                     <div className="bubbleMediaWrap">
                       <img src={msg.mediaUrl} alt="Shared" className="bubbleMedia bubbleMedia--image" />
-                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                      {msg.displayText ? (
+                        <div className="bubbleText">{msg.displayText}</div>
+                      ) : null}
                     </div>
                   ) : isVideo ? (
                     <div className="bubbleMediaWrap">
@@ -1956,12 +2458,16 @@ const ChatWindow = ({
                         className="bubbleMedia bubbleMedia--video"
                         src={msg.mediaUrl}
                       />
-                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                      {msg.displayText ? (
+                        <div className="bubbleText">{msg.displayText}</div>
+                      ) : null}
                     </div>
                   ) : isAudioFile ? (
                     <div className="bubbleMediaWrap">
                       <audio className="bubbleAudioFile" controls preload="metadata" src={msg.mediaUrl} />
-                      {msg.text ? <div className="bubbleText">{msg.text}</div> : null}
+                      {msg.displayText ? (
+                        <div className="bubbleText">{msg.displayText}</div>
+                      ) : null}
                     </div>
                   ) : isFile ? (
                     <a
@@ -1991,7 +2497,7 @@ const ChatWindow = ({
                       <span className="bubbleCallText">{callMatch[2]}</span>
                     </div>
                   ) : (
-                    <div className="bubbleText">{msg.text}</div>
+                    <div className="bubbleText">{msg.displayText}</div>
                   )}
                   <div className="bubbleFooter">
                     <span className="msgTime">{time}</span>
@@ -2006,6 +2512,35 @@ const ChatWindow = ({
                     )}
                   </div>
                 </div>
+                  {reactionChips.length > 0 && (
+                    <div
+                      className={`messageReactionStrip ${
+                        isSent ? "messageReactionStrip--sent" : "messageReactionStrip--received"
+                      }`}
+                    >
+                      {reactionChips.map((chip) => (
+                        <button
+                          key={chip.emoji}
+                          type="button"
+                          className={`messageReactionChip${
+                            chip.mine ? " messageReactionChip--mine" : ""
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleReaction(msg._id, chip.emoji);
+                          }}
+                          title={chip.mine ? "Remove reaction" : "React with same emoji"}
+                        >
+                          <span className="messageReactionChipEmoji" aria-hidden="true">
+                            {chip.emoji}
+                          </span>
+                          {chip.count > 1 ? (
+                            <span className="messageReactionChipCount">{chip.count}</span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {openMessageMenuId === msg._id && (
                     <div
                       className={`messageCtxPopover ${
@@ -2023,7 +2558,7 @@ const ChatWindow = ({
                             aria-label={`React with ${emoji}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              comingSoon("Reactions")();
+                              void handleToggleReaction(msg._id, emoji);
                             }}
                           >
                             {emoji}
@@ -2031,16 +2566,41 @@ const ChatWindow = ({
                         ))}
                         <button
                           type="button"
-                          className="messageCtxReactionBtn messageCtxReactionBtn--more"
+                          className={`messageCtxReactionBtn messageCtxReactionBtn--more${
+                            ctxReactionsExpanded ? " messageCtxReactionBtn--moreOn" : ""
+                          }`}
                           aria-label="More reactions"
+                          aria-expanded={ctxReactionsExpanded}
                           onClick={(e) => {
                             e.stopPropagation();
-                            comingSoon("Reactions")();
+                            setCtxReactionsExpanded((v) => !v);
                           }}
                         >
                           +
                         </button>
                       </div>
+                      {ctxReactionsExpanded ? (
+                        <div
+                          className="messageCtxReactions messageCtxReactions--extra"
+                          role="toolbar"
+                          aria-label="More emoji reactions"
+                        >
+                          {MESSAGE_CTX_EXTRA_REACTIONS.map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              className="messageCtxReactionBtn"
+                              aria-label={`React with ${emoji}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleToggleReaction(msg._id, emoji);
+                              }}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                       <div className="messageCtxMenu" role="menu">
                         <button
                           type="button"
@@ -2223,10 +2783,26 @@ const ChatWindow = ({
       )}
 
       {(incomingCall || callState.phase !== "idle") && (() => {
-        const isFullscreenVideo =
-          !incomingCall && callState.isVideo && callState.phase !== "idle";
-        const isFullscreenAudio =
-          !incomingCall && !callState.isVideo && callState.phase !== "idle";
+        const callActive = !incomingCall && callState.phase !== "idle";
+        const remoteHasLiveVideo = Boolean(
+          remoteCallStream?.getVideoTracks?.()?.some((t) => t.readyState === "live")
+        );
+        const useVideoLayout =
+          callActive &&
+          (Boolean(callState.isVideo) || isScreenSharing || remoteHasLiveVideo);
+        const isFullscreenVideo = useVideoLayout;
+        const isFullscreenAudio = callActive && !useVideoLayout;
+        const remoteShowsScreen = Boolean(
+          remoteCallStream
+            ?.getVideoTracks()
+            ?.some(
+              (t) =>
+                t.readyState === "live" &&
+                /screen|window|monitor|display|web-contents|region|tab/i.test(
+                  String(t.label || "")
+                )
+            )
+        );
         const peerName =
           callState.peerLabel ||
           getContactLabel(callState.peerId) ||
@@ -2300,7 +2876,7 @@ const ChatWindow = ({
                       <p className="callRemoteStatus">{statusLine}</p>
                     </div>
                   )}
-                  {mainIsLocal && isCameraOff && (
+                  {mainIsLocal && isCameraOff && !isScreenSharing && (
                     <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
                       <div className="callRemoteAvatar" aria-hidden="true">
                         <IconVideoOff />
@@ -2308,7 +2884,7 @@ const ChatWindow = ({
                       <p className="callRemoteStatus">Camera off</p>
                     </div>
                   )}
-                  {!mainIsLocal && peerCameraOff && (
+                  {!mainIsLocal && peerCameraOff && !remoteShowsScreen && (
                     <div className="callRemotePlaceholder callRemotePlaceholder--overlay">
                       <div className="callRemoteAvatar" aria-hidden="true">
                         <IconVideoOff />
@@ -2328,10 +2904,16 @@ const ChatWindow = ({
                           <span>muted</span>
                         </span>
                       )}
-                      {peerCameraOff && (
+                      {peerCameraOff && !remoteShowsScreen && (
                         <span className="callPeerCamBadge" title="Camera off">
                           <IconVideoOff />
                           <span>camera off</span>
+                        </span>
+                      )}
+                      {remoteShowsScreen && (
+                        <span className="callPeerScreenBadge" title="Screen share">
+                          <IconScreenShare />
+                          <span>screen</span>
                         </span>
                       )}
                     </p>
@@ -2413,6 +2995,7 @@ const ChatWindow = ({
                       onClick={toggleCameraOff}
                       aria-label={isCameraOff ? "Turn camera on" : "Turn camera off"}
                       title={isCameraOff ? "Turn camera on" : "Turn camera off"}
+                      disabled={isScreenSharing}
                     >
                       {isCameraOff ? <IconVideoOff /> : <IconVideo />}
                     </button>
@@ -2431,8 +3014,19 @@ const ChatWindow = ({
                       onClick={() => void switchCamera()}
                       aria-label="Switch camera"
                       title={cameraFacing === "user" ? "Use back camera" : "Use front camera"}
+                      disabled={isScreenSharing}
                     >
                       <IconSwitchCamera />
+                    </button>
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${isScreenSharing ? " callCtrlBtn--routeOn" : ""}`}
+                      onClick={() => void toggleScreenShare()}
+                      disabled={callState.phase !== "in-call"}
+                      aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
+                      title={isScreenSharing ? "Stop sharing" : "Share screen"}
+                    >
+                      <IconScreenShare />
                     </button>
                     <button
                       type="button"
@@ -2474,6 +3068,12 @@ const ChatWindow = ({
                         <span className="callPeerMutedBadge" title="Muted">
                           <IconMicOff />
                           <span>muted</span>
+                        </span>
+                      )}
+                      {remoteShowsScreen && (
+                        <span className="callPeerScreenBadge" title="Screen share">
+                          <IconScreenShare />
+                          <span>screen</span>
                         </span>
                       )}
                     </p>
@@ -2539,6 +3139,16 @@ const ChatWindow = ({
                       title="Speaker (loud)"
                     >
                       <IconSpeakerLoud />
+                    </button>
+                    <button
+                      type="button"
+                      className={`callCtrlBtn${isScreenSharing ? " callCtrlBtn--routeOn" : ""}`}
+                      onClick={() => void toggleScreenShare()}
+                      disabled={callState.phase !== "in-call"}
+                      aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
+                      title={isScreenSharing ? "Stop sharing" : "Share screen"}
+                    >
+                      <IconScreenShare />
                     </button>
                     <button
                       type="button"
@@ -2633,7 +3243,7 @@ const ChatWindow = ({
                         >
                           {msg.deletedForEveryone
                             ? "This message was deleted."
-                            : msg.text || (msg.kind ? `[${msg.kind}]` : "")}
+                            : msg.displayText || (msg.kind ? `[${msg.kind}]` : "")}
                         </div>
                       );
                     })}

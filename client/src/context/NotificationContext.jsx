@@ -107,7 +107,9 @@ export function NotificationProvider({ children }) {
       const preview =
         incoming.kind === "voice"
           ? "Voice message"
-          : (incoming.text || "").trim() || "Message";
+          : incoming.textE2ee
+            ? "Encrypted message"
+            : (incoming.text || "").trim() || "Message";
 
       pushItem({
         id,

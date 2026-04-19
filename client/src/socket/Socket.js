@@ -80,6 +80,18 @@ export const emitCallAnswer = ({ senderId, receiverId, answer }) => {
   }
 };
 
+export const emitCallRenegotiate = ({ senderId, receiverId, description }) => {
+  if (!socket || !description?.sdp || !description?.type) return;
+  socket.emit("callRenegotiate", {
+    senderId: String(senderId),
+    receiverId: String(receiverId),
+    description: {
+      type: String(description.type),
+      sdp: String(description.sdp),
+    },
+  });
+};
+
 export const emitCallIceCandidate = ({ senderId, receiverId, candidate }) => {
   if (socket) {
     socket.emit("callIceCandidate", {
@@ -138,6 +150,13 @@ export const subscribeMessageRevoked = (callback) => {
   return () => socket?.off("messageRevoked", handler);
 };
 
+export const subscribeMessageReaction = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("messageReaction", handler);
+  return () => socket?.off("messageReaction", handler);
+};
+
 export const subscribeTypingStatus = (callback) => {
   if (!socket) return () => {};
 
@@ -188,6 +207,13 @@ export const subscribeCallAnswered = (callback) => {
   return () => socket?.off("callAnswered", handler);
 };
 
+export const subscribeCallRenegotiate = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("callRenegotiate", handler);
+  return () => socket?.off("callRenegotiate", handler);
+};
+
 export const subscribeCallIceCandidate = (callback) => {
   if (!socket) return () => {};
   const handler = (data) => callback(data);
@@ -221,6 +247,27 @@ export const subscribeCallMuteStatus = (callback) => {
   const handler = (data) => callback(data);
   socket.on("callMuteStatus", handler);
   return () => socket?.off("callMuteStatus", handler);
+};
+
+export const subscribeStoryCreated = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("storyCreated", handler);
+  return () => socket?.off("storyCreated", handler);
+};
+
+export const subscribeStoryReaction = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("storyReaction", handler);
+  return () => socket?.off("storyReaction", handler);
+};
+
+export const subscribeStoryDeleted = (callback) => {
+  if (!socket) return () => {};
+  const handler = (data) => callback(data);
+  socket.on("storyDeleted", handler);
+  return () => socket?.off("storyDeleted", handler);
 };
 
 export const disconnectSocket = () => {

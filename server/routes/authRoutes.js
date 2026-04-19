@@ -6,6 +6,7 @@ import {
   getUsers,
   loginUser,
   registerUser,
+  updateEncryptionPublicKey,
   updateProfilePhoto,
 } from "../controller/authController.js";
 import { getDashboard } from "../controller/dashboardController.js";
@@ -32,6 +33,7 @@ const profileUpload = multer({
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
+router.patch("/profile/encryption-public-key", protect, updateEncryptionPublicKey);
 router.get("/dashboard", protect, getDashboard);
 router.patch(
   "/profile/photo",

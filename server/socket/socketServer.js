@@ -137,6 +137,20 @@ export function attachSocket(httpServer) {
       });
     });
 
+    /** Mid-call SDP (e.g. screen share on audio-only calls). */
+    socket.on("callRenegotiate", (data) => {
+      const { senderId, receiverId, description } = data || {};
+      if (!senderId || !receiverId || !description?.sdp || !description?.type) return;
+      emitToUserSockets(io, receiverId, "callRenegotiate", {
+        senderId: String(senderId),
+        receiverId: String(receiverId),
+        description: {
+          type: String(description.type),
+          sdp: String(description.sdp),
+        },
+      });
+    });
+
     socket.on("callIceCandidate", (data) => {
       const { senderId, receiverId, candidate } = data || {};
       if (!senderId || !receiverId || !candidate) return;

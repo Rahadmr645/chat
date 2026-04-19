@@ -29,6 +29,12 @@ export const messagePayloadForSocket = (doc) => {
     mediaName: o.mediaName ?? "",
     mediaSizeBytes: o.mediaSizeBytes ?? 0,
     deletedForEveryone: Boolean(o.deletedForEveryone),
+    textCipherIv: o.textCipherIv ?? "",
+    textE2ee: Boolean(o.textE2ee),
+    reactions: (o.reactions || []).map((x) => ({
+      userId: String(x.userId),
+      emoji: String(x.emoji || ""),
+    })),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
   };
@@ -37,6 +43,8 @@ export const messagePayloadForSocket = (doc) => {
       ...base,
       kind: "text",
       text: "This message was deleted.",
+      textCipherIv: "",
+      textE2ee: false,
       durationSec: 0,
       voiceMime: "",
       mediaUrl: "",
@@ -46,9 +54,30 @@ export const messagePayloadForSocket = (doc) => {
       mediaDurationSec: 0,
       mediaName: "",
       mediaSizeBytes: 0,
+      reactions: [],
     };
   }
   return base;
+};
+
+const validateE2eeTextPayload = (textRaw, ivRaw) => {
+  try {
+    const iv = Buffer.from(String(ivRaw).trim(), "base64");
+    if (iv.length !== 12) {
+      return { ok: false, error: "Invalid encryption IV" };
+    }
+    const t = String(textRaw ?? "").trim();
+    if (!t) {
+      return { ok: false, error: "Ciphertext is required" };
+    }
+    const ct = Buffer.from(t, "base64");
+    if (ct.length < 16 || ct.length > 512 * 1024) {
+      return { ok: false, error: "Invalid ciphertext" };
+    }
+    return { ok: true, text: t, textCipherIv: String(ivRaw).trim() };
+  } catch {
+    return { ok: false, error: "Invalid encrypted payload" };
+  }
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,10 +100,11 @@ const assertFriendAndNotBlocked = async (req, otherUserId) => {
 export const sendMessage = async (req, res) => {
   try {
     const senderId = req.user._id;
-    const { receiverId, text } = req.body;
+    const { receiverId, text, textCipherIv } = req.body;
+    const useE2ee = textCipherIv != null && String(textCipherIv).trim() !== "";
 
-    if (!receiverId || !text?.trim()) {
-      return res.status(400).json({ error: "receiverId and text are required" });
+    if (!receiverId) {
+      return res.status(400).json({ error: "receiverId is required" });
     }
 
     const sender = await User.findById(senderId).select("friends");
@@ -90,12 +120,35 @@ export const sendMessage = async (req, res) => {
       return res.status(403).json({ error: "Messaging is not allowed" });
     }
 
-    const newMessage = await Message.create({
-      senderId,
-      receiverId,
-      kind: "text",
-      text: text.trim(),
-    });
+    let payload;
+    if (useE2ee) {
+      const v = validateE2eeTextPayload(text, textCipherIv);
+      if (!v.ok) {
+        return res.status(400).json({ error: v.error });
+      }
+      payload = {
+        senderId,
+        receiverId,
+        kind: "text",
+        text: v.text,
+        textCipherIv: v.textCipherIv,
+        textE2ee: true,
+      };
+    } else {
+      if (!text?.trim()) {
+        return res.status(400).json({ error: "receiverId and text are required" });
+      }
+      payload = {
+        senderId,
+        receiverId,
+        kind: "text",
+        text: text.trim(),
+        textCipherIv: "",
+        textE2ee: false,
+      };
+    }
+
+    const newMessage = await Message.create(payload);
 
     emitToUser(String(receiverId), "getMessage", messagePayloadForSocket(newMessage));
 
@@ -169,7 +222,9 @@ export const sendMediaMessage = async (req, res) => {
   try {
     const senderId = req.user._id;
     const receiverId = req.body?.receiverId;
-    const caption = String(req.body?.text || "").trim();
+    const captionRaw = req.body?.text;
+    const captionIv = req.body?.textCipherIv;
+    const useCaptionE2ee = captionIv != null && String(captionIv).trim() !== "";
     const file = req.file;
 
     if (!receiverId) {
@@ -201,11 +256,23 @@ export const sendMediaMessage = async (req, res) => {
       resource_type: "auto",
     });
 
+    let textFields;
+    if (useCaptionE2ee) {
+      const v = validateE2eeTextPayload(captionRaw, captionIv);
+      if (!v.ok) {
+        return res.status(400).json({ error: v.error });
+      }
+      textFields = { text: v.text, textCipherIv: v.textCipherIv, textE2ee: true };
+    } else {
+      const caption = String(captionRaw || "").trim();
+      textFields = { text: caption, textCipherIv: "", textE2ee: false };
+    }
+
     const newMessage = await Message.create({
       senderId,
       receiverId,
       kind,
-      text: caption,
+      ...textFields,
       mediaUrl: uploaded.secure_url || "",
       mediaPublicId: uploaded.public_id || "",
       mediaMime: mime,
@@ -391,6 +458,8 @@ export const deleteMessage = async (req, res) => {
 
     message.deletedForEveryone = true;
     message.text = "";
+    message.textCipherIv = "";
+    message.textE2ee = false;
     message.kind = "text";
     message.durationSec = 0;
     message.voiceMime = "";
@@ -402,6 +471,7 @@ export const deleteMessage = async (req, res) => {
     message.mediaDurationSec = 0;
     message.mediaName = "";
     message.mediaSizeBytes = 0;
+    message.reactions = [];
     await message.save();
 
     if (wasVoice) {
@@ -419,6 +489,71 @@ export const deleteMessage = async (req, res) => {
     emitToUser(r, "messageRevoked", { message: payload });
 
     return res.json({ message: payload });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const isPlausibleReactionEmoji = (raw) => {
+  const s = String(raw ?? "").trim();
+  if (!s || s.length > 24) return false;
+  if (/[\u0000-\u001f<>\\]/.test(s)) return false;
+  return true;
+};
+
+export const setMessageReaction = async (req, res) => {
+  try {
+    const me = req.user._id;
+    const my = String(me);
+    const { messageId } = req.params;
+    const emoji = String(req.body?.emoji ?? "").trim();
+
+    if (!isPlausibleReactionEmoji(emoji)) {
+      return res.status(400).json({ error: "Invalid reaction" });
+    }
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+    if (message.deletedForEveryone) {
+      return res.status(410).json({ error: "Message was deleted" });
+    }
+
+    const s = String(message.senderId);
+    const r = String(message.receiverId);
+    if (s !== my && r !== my) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const otherId = s === my ? message.receiverId : message.senderId;
+    const gate = await assertFriendAndNotBlocked(req, otherId);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ error: gate.error });
+    }
+
+    const prev = [...(message.reactions || [])].map((x) => ({
+      userId: x.userId,
+      emoji: String(x.emoji || ""),
+    }));
+    const idx = prev.findIndex((x) => String(x.userId) === my);
+    let next;
+    if (idx >= 0 && prev[idx].emoji === emoji) {
+      next = prev.filter((_, i) => i !== idx);
+    } else if (idx >= 0) {
+      next = prev.map((x, i) => (i === idx ? { userId: me, emoji } : x));
+    } else {
+      next = [...prev, { userId: me, emoji }];
+    }
+
+    message.reactions = next;
+    await message.save();
+
+    const payload = messagePayloadForSocket(message);
+    emitToUser(s, "messageReaction", { message: payload });
+    emitToUser(r, "messageReaction", { message: payload });
+
+    return res.json(payload);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

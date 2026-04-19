@@ -8,6 +8,7 @@ const sanitizeUser = (user) => ({
   name: user.name,
   email: user.email,
   avatarUrl: user.avatarUrl || "",
+  encryptionPublicKey: user.encryptionPublicKey || "",
 });
 
 const mapCallLogRows = (rows) =>
@@ -55,7 +56,7 @@ export const getDashboard = async (req, res) => {
           .sort({ name: 1 })
           .lean(),
         User.find({ _id: { $in: currentFriends } })
-          .select("name email lastSeenAt avatarUrl")
+          .select("name email lastSeenAt avatarUrl encryptionPublicKey")
           .sort({ name: 1 })
           .lean(),
         FriendRequest.find({
